@@ -1,3 +1,4 @@
+import { createTestLink } from './helpers/symlinks';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -38,7 +39,7 @@ test('rejects traversals, unsupported files, symlinks and already manually resol
     for (const name of ['../groups.yml', '/tmp/groups.yml', '.kot/parameter-profiles.json', '.git/config', '.kot/groups.yml']) { assert.equal(metadataKind(name), undefined); }
     await fs.writeFile(f.file, 'version: 1\nid: smoke\nname: Manual\nsections: [main]\n');
     await assert.rejects(prepareMetadataResolution(f.root, f.relative), /manual/iu);
-    await fs.unlink(f.file); await fs.symlink(path.join(f.root, 'outside'), f.file);
+    await fs.unlink(f.file); if (!await createTestLink(t, path.join(f.root, 'outside'), f.file)) { return; }
     await assert.rejects(prepareMetadataResolution(f.root, f.relative), /symbolic|symlink/iu);
 });
 

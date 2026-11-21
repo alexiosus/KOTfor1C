@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import { assertProjectFormat3, assertProjectFormatUnchanged, projectFormat } from './projectFormat';
 import * as vscode from 'vscode';
 import { convertScenarioTestRole } from './scenarioTestRole';
@@ -10,6 +11,8 @@ import { findLinkedScenarioSettings } from './scenarioPropertiesBindings';
 import { projectLibraryEnvironment } from './projectLibraryIntegration';
 import { resolveProjectLibraryRoot } from './projectLibraryMetadata';
 import { getTranslator } from './localization';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 /** Shared role conversion entry point; it never re-enters the Properties action queue. */
 export async function handleConvertScenarioRole(context: vscode.ExtensionContext, target?: vscode.Uri, targetMain?: boolean): Promise<import('./scenarioPropertyIdentity').ScenarioIdentityChangeResult | undefined> {
@@ -59,10 +62,10 @@ export async function handleConvertScenarioRole(context: vscode.ExtensionContext
             refreshCache: true,
             changedSourceUris: result === 'unchanged' ? [] : [source.uri, ...(source.scriptUri ? [source.scriptUri] : []), ...settings.map(setting => setting.uri)]
         });
-        void vscode.window.showInformationMessage(t(main ? 'Converted to a main test.' : 'Converted to a nested test. Launch settings were archived.'));
+        void kotUi.showInformationMessage(t(main ? 'Converted to a main test.' : 'Converted to a nested test. Launch settings were archived.'));
         return { sourceUri: source.uri, uriMoves: [] };
     } catch (error) {
-        void vscode.window.showErrorMessage(t('Could not convert the test role: {0}', error instanceof Error ? error.message : String(error)));
+        void kotUi.showErrorMessage(t('Could not convert the test role: {0}', error instanceof Error ? error.message : String(error)));
     }
 }
 
@@ -84,9 +87,9 @@ export async function showScenarioConversions(context: vscode.ExtensionContext, 
             ...(!main && kind === 'scenario' ? [{ label: t('Convert to exported scenario…'), action: 'callable' }] : []),
             ...(kind === 'scenario' && /[\\/](?:scen|meta)\.yaml$/u.test(uri.fsPath)
                 ? [{ label: t('Convert source format…'), action: 'format' }] : [])];
-        const choice = await vscode.window.showQuickPick(choices, { title: t('Conversions'), ignoreFocusOut: true });
+        const choice = await kotUi.showQuickPick(choices, { title: t('Conversions'), ignoreFocusOut: true });
         if (choice?.action === 'role') { return handleConvertScenarioRole(context, uri, !main); }
         if (choice?.action === 'format') { return (await import('./spprScenarioFiles.js')).handleConvertScenarioFormat(uri); }
         if (choice?.action === 'callable') { await vscode.commands.executeCommand('kotTestToolkit.convertCallableScenario', uri); }
-    } catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error)); }
+    } catch (error) { void kotUi.showErrorMessage(error instanceof Error ? error.message : String(error)); }
 }

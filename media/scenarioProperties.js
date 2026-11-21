@@ -365,7 +365,7 @@
             for (const suggestion of field.suggestions) { const option = node('option'); option.value = suggestion; suggestions.append(option); }
             controlsRow.append(suggestions);
         }
-        if (field.inlineAction) { controlsRow.append(actionButton(field.inlineAction, undefined, { icon: field.inlineAction === 'aiDescription' ? 'sparkle' : 'go-to-file', iconOnly: true })); }
+        if (field.inlineAction) { controlsRow.append(actionButton(field.inlineAction, undefined, { icon: 'go-to-file', iconOnly: true })); }
         wrapper.append(fieldLabel, controlsRow);
         return wrapper;
     }
@@ -615,7 +615,7 @@
         shell.content.append(fields([
             ...(hasGroup ? [{ key: 'groupId', value: values.groupId || '', choices: ['', ...state.groups.map(group => group.id)], createAction: 'newGroup' },
                 { key: 'order', value: state.displayOrder !== undefined ? state.displayOrder ?? '' : values.order ?? '' }] : []),
-            { key: 'description', value: values.description || '', multiline: true, inlineAction: 'aiDescription' },
+            { key: 'description', value: values.description || '', multiline: true },
             { key: 'category', value: values.category || '', choices: ['', ...(state.catalogs?.categories || [])], createAction: 'createChoice', action: 'catalogChoice' }
         ], sourceDocument, { section: 'metadata' }, true));
         const open = actionButton('openMetadata', undefined, { icon: 'go-to-file', iconOnly: true }); open.className += ' properties-header-action'; shell.section.children[0].append(open);

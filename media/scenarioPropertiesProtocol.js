@@ -31,7 +31,7 @@
         addSteps: 'Add process step', addNested: 'Add nested scenario', openReference: 'Open referenced definition',
         moveUp: 'Move up', moveDown: 'Move down', dragRecord: 'Drag to reorder', dropAtEnd: 'Move record to the end',
         groupId: 'Group', ungrouped: 'Ungrouped', order: 'Display order (local)', description: 'Description', category: 'Category',
-        newGroup: 'New group', aiDescription: 'Generate description with AI',
+        newGroup: 'New group',
         files: 'Files', dropAttachments: 'Drop files anywhere in this panel to attach them to the test.',
         openAttachment: 'Open attachment', revealAttachments: 'Open folder', deleteAttachment: 'Delete attachment', renameAttachment: 'Rename attachment',
         addAttachments: 'Add files', insertAttachment: 'Insert file name',
@@ -44,7 +44,7 @@
         'ТегиПроцесса': 'Process tags', 'ТегиТеста': 'Test tags'
     });
     const actions = new Set(['save', 'pin', 'openSource', 'openFeature', 'openText', 'openSettings', 'openMetadata', 'copyPath', 'rename', 'changeCode',
-        'systemFunction', 'base', 'users', 'addSteps', 'aiDescription', 'changeGroup', 'newGroup', 'createSettings',
+        'systemFunction', 'base', 'users', 'addSteps', 'changeGroup', 'newGroup', 'createSettings',
         'selectSettings', 'addNested', 'openReference', 'fillParameters', 'fillNested', 'dismissError', 'favorite', 'convertFormat', 'convertRole', 'convertCallable', 'run']);
     const metadataFields = new Set(['groupId', 'order', 'description', 'category']);
     const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);

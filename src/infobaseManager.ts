@@ -1,3 +1,4 @@
+import { kotWindow, assertKotPath } from './kotInteraction';
 import * as cp from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -34,8 +35,11 @@ import {
     resolveOneCPlatformForLaunch
 } from './oneCPlatform';
 import { getSharedStartupInfobasePaths } from './startupInfobase';
+import { resolveSharedStartupPlatform } from './sharedStartupPlatform';
 import { formatProcessCommandForDisplay } from './processCommandDisplay';
 import { buildDestructiveInfobaseImportConfirmation } from './infobaseDestructiveConfirmation';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 const INFOBASE_MANAGER_OUTPUT_CHANNEL_NAME = 'KOT Infobase Manager';
 const INFOBASE_MANAGER_METADATA_KEY = 'infobaseManager.metadataByPath';
@@ -1515,7 +1519,7 @@ export async function promptNewInfobaseTarget(
     let currentDefaultUri = vscode.Uri.file(initialDirectory);
 
     while (true) {
-        const pickedFolder = await vscode.window.showOpenDialog({
+        const pickedFolder = await kotUi.showOpenDialog({
             canSelectFiles: false,
             canSelectFolders: true,
             canSelectMany: false,
@@ -1530,7 +1534,7 @@ export async function promptNewInfobaseTarget(
         const selectedInfobasePath = path.resolve(pickedFolder[0].fsPath);
         const validationError = validateNewInfobasePath(t, selectedInfobasePath);
         if (!validationError) {
-            const launcherName = await vscode.window.showInputBox({
+            const launcherName = await kotUi.showInputBox({
                 title: options?.launcherNameTitle || t('Enter name for new infobase in 1C launcher'),
                 value: sanitizeDisplayName(options?.defaultName || path.basename(selectedInfobasePath) || 'KOT Infobase'),
                 ignoreFocusOut: true,
@@ -1549,7 +1553,7 @@ export async function promptNewInfobaseTarget(
         }
 
         currentDefaultUri = vscode.Uri.file(selectedInfobasePath);
-        const choice = await vscode.window.showErrorMessage(validationError, chooseAnotherFolderLabel);
+        const choice = await kotUi.showErrorMessage(validationError, chooseAnotherFolderLabel);
         if (choice !== chooseAnotherFolderLabel) {
             return null;
         }
@@ -1582,7 +1586,7 @@ function appendInfobaseAuthenticationArgs(args: string[], authentication: Infoba
     ];
 }
 
-function isInfobaseAuthenticationError(message: string): boolean {
+export function isInfobaseAuthenticationError(message: string): boolean {
     const normalized = (message || '').toLowerCase();
     return normalized.includes('not authenticated')
         || normalized.includes('is not authenticated')
@@ -1600,7 +1604,7 @@ async function promptInfobaseAuthentication(
     initialAuthentication: InfobaseAuthentication | null,
     retryMode: boolean
 ): Promise<InfobaseAuthentication | undefined> {
-    const username = await vscode.window.showInputBox({
+    const username = await kotUi.showInputBox({
         title: retryMode
             ? t('Infobase authentication failed. Enter infobase login')
             : t('Enter infobase login'),
@@ -1617,7 +1621,7 @@ async function promptInfobaseAuthentication(
         return { username: '', password: '' };
     }
 
-    const password = await vscode.window.showInputBox({
+    const password = await kotUi.showInputBox({
         title: t('Enter infobase password'),
         placeHolder: t('Password can be empty'),
         value: initialAuthentication?.password || '',
@@ -1700,10 +1704,19 @@ async function resolveConfiguredOneCClientExePath(
     return configuredClientPath;
 }
 
-function getManagedInfobaseConfiguredPlatformClientExePath(
+function isSharedStartupInfobase(infobasePath: string): boolean {
+    const startupPaths = getSharedStartupInfobasePaths();
+    const fileInfobasePath = getFileInfobasePath(infobasePath);
+    return !!startupPaths && !!fileInfobasePath
+        && normalizePathForCompare(fileInfobasePath) === normalizePathForCompare(startupPaths.infobaseDirectory);
+}
+
+async function getManagedInfobaseConfiguredPlatformClientExePath(
     context: vscode.ExtensionContext,
-    infobasePath: string
-): string | null {
+    infobasePath: string,
+    t: Translator
+): Promise<string | null> {
+    if (isSharedStartupInfobase(infobasePath)) { return (await resolveSharedStartupPlatform(t))?.clientExePath ?? null; }
     return getManagedInfobasePreferredPlatformClientExePath(context, infobasePath);
 }
 
@@ -2011,7 +2024,7 @@ export async function createInfobaseWithLauncherRegistration(
     const safeBaseName = path.basename(infobasePath).replace(/[^a-zA-Z0-9._-]+/g, '_') || 'infobase';
     const logPath = path.join(logsDirectory, `${Date.now()}-${safeBaseName}-create.log`);
 
-    await vscode.window.withProgress(
+    await kotUi.withProgress(
         {
             location: vscode.ProgressLocation.Notification,
             title: options?.progressTitle || t('Creating infobase...'),
@@ -2047,7 +2060,7 @@ export async function createInfobaseInteractive(
     options?: { defaultName?: string; defaultDirectoryPath?: string | null; addRoles?: ManagedInfobaseRole[]; }
 ): Promise<string | null> {
     const t = await getTranslator(context.extensionUri);
-    const mode = await vscode.window.showQuickPick([
+    const mode = await kotUi.showQuickPick([
         { label: t('Empty infobase without configuration'), templateKind: 'blank' as const },
         { label: t('Empty infobase from configuration template'), templateKind: 'configuration' as const },
         { label: t('Demo infobase from template'), templateKind: 'demo' as const }
@@ -2115,7 +2128,7 @@ export async function copyInfobaseInteractive(
     }
 
     await assertInfobaseNotBusy(fileInfobasePath, t);
-    await vscode.window.withProgress(
+    await kotUi.withProgress(
         {
             location: vscode.ProgressLocation.Notification,
             title: t('Copying infobase...'),
@@ -2150,7 +2163,7 @@ export async function exportInfobaseToDtInteractive(
     assertNonWebInfobaseReference(t, infobasePath, t('Export DT'));
     const designerExePath = await resolveConfiguredOneCDesignerExePath(
         t,
-        getManagedInfobaseConfiguredPlatformClientExePath(context, infobasePath)
+        await getManagedInfobaseConfiguredPlatformClientExePath(context, infobasePath, t)
     );
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     const output = getInfobaseManagerOutputChannel();
@@ -2158,7 +2171,7 @@ export async function exportInfobaseToDtInteractive(
         getInfobaseDefaultArtifactDirectory(infobasePath, workspaceRootPath),
         `${getInfobaseFileStem(infobasePath)}.dt`
     ));
-    const selectedTarget = await vscode.window.showSaveDialog({
+    const selectedTarget = await kotUi.showSaveDialog({
         title: t('Choose target DT file'),
         saveLabel: t('Export DT'),
         defaultUri,
@@ -2187,7 +2200,7 @@ export async function exportInfobaseToDtInteractive(
         targetDtPath
     ];
 
-    await vscode.window.withProgress(
+    await kotUi.withProgress(
         {
             location: vscode.ProgressLocation.Notification,
             title: t('Exporting infobase to DT...'),
@@ -2218,7 +2231,7 @@ export async function exportInfobaseConfigurationToCfInteractive(
     assertNonWebInfobaseReference(t, infobasePath, t('Save CF'));
     const designerExePath = await resolveConfiguredOneCDesignerExePath(
         t,
-        getManagedInfobaseConfiguredPlatformClientExePath(context, infobasePath)
+        await getManagedInfobaseConfiguredPlatformClientExePath(context, infobasePath, t)
     );
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     const output = getInfobaseManagerOutputChannel();
@@ -2226,7 +2239,7 @@ export async function exportInfobaseConfigurationToCfInteractive(
         getInfobaseDefaultArtifactDirectory(infobasePath, workspaceRootPath),
         `${getInfobaseFileStem(infobasePath)}.cf`
     ));
-    const selectedTarget = await vscode.window.showSaveDialog({
+    const selectedTarget = await kotUi.showSaveDialog({
         title: t('Choose target CF file'),
         saveLabel: t('Save CF'),
         defaultUri,
@@ -2255,7 +2268,7 @@ export async function exportInfobaseConfigurationToCfInteractive(
         targetCfPath
     ];
 
-    await vscode.window.withProgress(
+    await kotUi.withProgress(
         {
             location: vscode.ProgressLocation.Notification,
             title: t('Saving infobase configuration to CF...'),
@@ -2284,7 +2297,7 @@ export async function recreateInfobaseInteractive(
 ): Promise<void> {
     const t = await getTranslator(context.extensionUri);
     const fileInfobasePath = assertFileInfobaseRecord(t, infobase, t('Recreate infobase'));
-    const confirmation = await vscode.window.showWarningMessage(
+    const confirmation = await kotUi.showWarningMessage(
         t('Recreate infobase "{0}" and delete all current files?', infobase.displayName),
         { modal: true },
         t('Recreate')
@@ -2293,7 +2306,7 @@ export async function recreateInfobaseInteractive(
         return;
     }
 
-    const backupMode = await vscode.window.showQuickPick(
+    const backupMode = await kotUi.showQuickPick(
         [
             {
                 label: t('No backup DT'),
@@ -2326,7 +2339,7 @@ export async function recreateInfobaseInteractive(
 
     const designerExePath = await resolveConfiguredOneCDesignerExePath(
         t,
-        getManagedInfobaseConfiguredPlatformClientExePath(context, infobase.infobasePath)
+        await getManagedInfobaseConfiguredPlatformClientExePath(context, infobase.infobasePath, t)
     );
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     const output = getInfobaseManagerOutputChannel();
@@ -2335,7 +2348,7 @@ export async function recreateInfobaseInteractive(
     const safeBaseName = getInfobaseFileStem(fileInfobasePath, infobase.displayName);
     const recreateLogPath = path.join(logsDirectory, `${Date.now()}-${safeBaseName}-recreate.log`);
 
-    await vscode.window.withProgress(
+    await kotUi.withProgress(
         {
             location: vscode.ProgressLocation.Notification,
             title: t('Recreating infobase...'),
@@ -2385,7 +2398,7 @@ export async function restoreInfobaseFromDtInteractive(
         if (!template) { return; }
         dtPath = path.resolve(template.filePath);
     } else {
-        const selectedFile = await vscode.window.showOpenDialog({
+        const selectedFile = await kotUi.showOpenDialog({
             canSelectFiles: true,
             canSelectFolders: false,
             canSelectMany: false,
@@ -2407,7 +2420,7 @@ export async function restoreInfobaseFromDtInteractive(
         infobase,
         t
     );
-    const answer = await vscode.window.showWarningMessage(
+    const answer = await kotUi.showWarningMessage(
         confirmation.title,
         { modal: true, detail: confirmation.detail },
         confirmation.confirmLabel
@@ -2419,7 +2432,7 @@ export async function restoreInfobaseFromDtInteractive(
     await assertInfobaseNotBusy(infobase.infobasePath, t);
     const designerExePath = await resolveConfiguredOneCDesignerExePath(
         t,
-        getManagedInfobaseConfiguredPlatformClientExePath(context, infobase.infobasePath)
+        await getManagedInfobaseConfiguredPlatformClientExePath(context, infobase.infobasePath, t)
     );
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     const output = getInfobaseManagerOutputChannel();
@@ -2439,7 +2452,7 @@ export async function restoreInfobaseFromDtInteractive(
         dtPath
     ];
 
-    await vscode.window.withProgress(
+    await kotUi.withProgress(
         {
             location: vscode.ProgressLocation.Notification,
             title: t('Restoring infobase from DT...'),
@@ -2504,7 +2517,7 @@ export async function updateInfobaseConfigurationInteractive(
     ];
     const selection = modeHint
         ? choices.find(choice => choice.modeKey === modeHint)
-        : await vscode.window.showQuickPick(choices, {
+        : await kotUi.showQuickPick(choices, {
             title: t('Update configuration for "{0}"', infobase.displayName),
             ignoreFocusOut: true
         });
@@ -2536,7 +2549,7 @@ export async function updateInfobaseConfigurationInteractive(
         commandArgs = ['/LoadCfg', importSourcePath, '/UpdateDBCfg'];
         logSuffix = 'update-from-template';
     } else {
-        const selectedCfFile = await vscode.window.showOpenDialog({
+        const selectedCfFile = await kotUi.showOpenDialog({
             canSelectFiles: true,
             canSelectFolders: false,
             canSelectMany: false,
@@ -2565,7 +2578,7 @@ export async function updateInfobaseConfigurationInteractive(
         infobase,
         t
     );
-    const answer = await vscode.window.showWarningMessage(
+    const answer = await kotUi.showWarningMessage(
         confirmation.title,
         { modal: true, detail: confirmation.detail },
         confirmation.confirmLabel
@@ -2577,7 +2590,7 @@ export async function updateInfobaseConfigurationInteractive(
     await assertInfobaseNotBusy(infobase.infobasePath, t);
     const designerExePath = await resolveConfiguredOneCDesignerExePath(
         t,
-        getManagedInfobaseConfiguredPlatformClientExePath(context, infobase.infobasePath)
+        await getManagedInfobaseConfiguredPlatformClientExePath(context, infobase.infobasePath, t)
     );
     const output = getInfobaseManagerOutputChannel();
     const logsDirectory = path.join(workspaceRootPath, '.vscode', 'kot-runtime', 'infobase-manager', 'logs');
@@ -2595,7 +2608,7 @@ export async function updateInfobaseConfigurationInteractive(
         ...commandArgs
     ];
 
-    await vscode.window.withProgress(
+    await kotUi.withProgress(
         {
             location: vscode.ProgressLocation.Notification,
             title: t('Updating infobase configuration...'),
@@ -2627,7 +2640,7 @@ export async function renameInfobaseInteractive(
     infobase: ManagedInfobaseRecord
 ): Promise<string | null> {
     const t = await getTranslator(context.extensionUri);
-    const nextDisplayName = await vscode.window.showInputBox({
+    const nextDisplayName = await kotUi.showInputBox({
         title: t('Rename infobase'),
         value: infobase.launcherName || infobase.displayName || getInfobaseDisplayNameFallback(infobase.infobasePath) || 'KOT Infobase',
         ignoreFocusOut: true,
@@ -2671,7 +2684,7 @@ export async function configureInfobaseStartupParametersInteractive(
     const t = await getTranslator(context.extensionUri);
     const globalStartupParameters = getConfiguredGlobalStartupParameters();
     const currentStartupParametersMode = infobase.startupParametersMode;
-    const selectedMode = await vscode.window.showQuickPick(
+    const selectedMode = await kotUi.showQuickPick(
         [
             {
                 label: t('Do not use launch keys'),
@@ -2716,7 +2729,7 @@ export async function configureInfobaseStartupParametersInteractive(
         return null;
     }
 
-    const startupParameters = await vscode.window.showInputBox({
+    const startupParameters = await kotUi.showInputBox({
         title: t('Enter launch keys for "{0}"', infobase.displayName),
         value: infobase.startupParameters || globalStartupParameters || '',
         placeHolder: t('Example: /L ru /RunModeOrdinaryApplication'),
@@ -2744,7 +2757,7 @@ export async function moveInfobaseInteractive(
         throw new Error(t('Infobase directory does not exist and cannot be moved: {0}', fileInfobasePath));
     }
 
-    const selectedParentDirectory = await vscode.window.showOpenDialog({
+    const selectedParentDirectory = await kotUi.showOpenDialog({
         canSelectFiles: false,
         canSelectFolders: true,
         canSelectMany: false,
@@ -2757,7 +2770,7 @@ export async function moveInfobaseInteractive(
     }
 
     const targetParentDirectory = path.resolve(selectedParentDirectory[0].fsPath);
-    const targetFolderName = await vscode.window.showInputBox({
+    const targetFolderName = await kotUi.showInputBox({
         title: t('Enter target folder name'),
         value: path.basename(fileInfobasePath),
         ignoreFocusOut: true,
@@ -2778,13 +2791,14 @@ export async function moveInfobaseInteractive(
     }
 
     const nextInfobasePath = path.resolve(targetParentDirectory, targetFolderName.trim());
+    await assertKotPath?.(nextInfobasePath, true);
     const validationError = validateInfobaseMoveTarget(t, fileInfobasePath, nextInfobasePath);
     if (validationError) {
         throw new Error(validationError);
     }
 
     await assertInfobaseNotBusy(fileInfobasePath, t);
-    await vscode.window.withProgress(
+    await kotUi.withProgress(
         {
             location: vscode.ProgressLocation.Notification,
             title: t('Moving infobase...'),
@@ -2828,7 +2842,7 @@ export async function reassignInfobasePathInteractive(
 ): Promise<string | null> {
     const t = await getTranslator(context.extensionUri);
     const fileInfobasePath = assertFileInfobaseRecord(t, infobase, t('Reassign infobase folder'));
-    const selectedDirectory = await vscode.window.showOpenDialog({
+    const selectedDirectory = await kotUi.showOpenDialog({
         canSelectFiles: false,
         canSelectFolders: true,
         canSelectMany: false,
@@ -2874,7 +2888,7 @@ export async function deleteInfobaseInteractive(
 ): Promise<void> {
     const t = await getTranslator(context.extensionUri);
     const fileInfobasePath = assertFileInfobaseRecord(t, infobase, t('Delete infobase'));
-    const confirmation = await vscode.window.showWarningMessage(
+    const confirmation = await kotUi.showWarningMessage(
         t('Delete infobase "{0}" completely (files and launcher registration)?', infobase.displayName),
         { modal: true },
         t('Delete infobase')
@@ -2885,7 +2899,7 @@ export async function deleteInfobaseInteractive(
 
     let backupDtPath: string | null = null;
     if (infobase.exists && infobase.markerExists) {
-        const backupMode = await vscode.window.showQuickPick(
+        const backupMode = await kotUi.showQuickPick(
             [
                 {
                     label: t('Delete without DT backup'),
@@ -2918,7 +2932,7 @@ export async function deleteInfobaseInteractive(
         await assertInfobaseNotBusy(fileInfobasePath, t);
     }
 
-    await vscode.window.withProgress(
+    await kotUi.withProgress(
         {
             location: vscode.ProgressLocation.Notification,
             title: t('Deleting infobase...'),
@@ -2937,7 +2951,7 @@ export async function deleteInfobaseInteractive(
 
     await purgeManagedInfobaseReferences(context, fileInfobasePath);
     if (backupDtPath) {
-        vscode.window.showInformationMessage(t('DT backup created before delete: {0}', backupDtPath));
+        kotUi.showInformationMessage(t('DT backup created before delete: {0}', backupDtPath));
     }
 }
 
@@ -2981,7 +2995,7 @@ export async function editInfobaseInteractive(
             }
         );
     }
-    const selection = await vscode.window.showQuickPick(
+    const selection = await kotUi.showQuickPick(
         selectionItems,
         {
             title: t('Edit "{0}"', infobase.displayName),
@@ -3016,7 +3030,7 @@ export async function addInfobaseToLauncherInteractive(
     infobase: ManagedInfobaseRecord
 ): Promise<void> {
     const t = await getTranslator(context.extensionUri);
-    const launcherName = await vscode.window.showInputBox({
+    const launcherName = await kotUi.showInputBox({
         title: t('Enter infobase name for 1C launcher'),
         value: infobase.launcherName || infobase.displayName || getInfobaseDisplayNameFallback(infobase.infobasePath) || 'KOT Infobase',
         ignoreFocusOut: true,
@@ -3040,7 +3054,7 @@ export async function removeInfobaseFromLauncherInteractive(
     context: vscode.ExtensionContext
 ): Promise<void> {
     const t = await getTranslator(context.extensionUri);
-    const confirmation = await vscode.window.showWarningMessage(
+    const confirmation = await kotUi.showWarningMessage(
         t('Remove "{0}" from 1C launcher?', infobase.displayName),
         { modal: true },
         t('Remove from launcher')
@@ -3062,6 +3076,10 @@ async function resolveManagedInfobaseLaunchPlatform(
     placeHolder: string,
     options?: ManagedInfobaseLaunchOptions
 ): Promise<{ platform: ConfiguredOneCPlatform; persistSelection: boolean } | null> {
+    if (isSharedStartupInfobase(infobasePath)) {
+        const platform = await resolveSharedStartupPlatform(t);
+        return platform ? { platform, persistSelection: false } : null;
+    }
     const configuredPlatforms = await ensureOneCPlatformsCatalogInitialized();
     const explicitClientPath = normalizePreferredPlatformClientExePath(options?.preferredOneCClientExePath || null);
     if (explicitClientPath) {
@@ -3226,7 +3244,7 @@ export async function showInfobaseLogsInteractive(
         throw new Error('No log targets are known for this infobase yet.');
     }
 
-    const selectedTarget = await vscode.window.showQuickPick(
+    const selectedTarget = await kotUi.showQuickPick(
         infobase.logTargets.map(target => ({
             label: target.label,
             description: target.targetPath,
@@ -3336,7 +3354,7 @@ export async function pickManagedInfobasePath(
         });
     }
 
-    const selection = await vscode.window.showQuickPick(quickPickItems, {
+    const selection = await kotUi.showQuickPick(quickPickItems, {
         placeHolder: options?.placeHolder || t('Choose target infobase'),
         ignoreFocusOut: true
     });
@@ -3361,7 +3379,7 @@ export async function pickManagedInfobasePath(
         return selection.infobasePath;
     }
 
-    const selectedDirectory = await vscode.window.showOpenDialog({
+    const selectedDirectory = await kotUi.showOpenDialog({
         canSelectFiles: false,
         canSelectFolders: true,
         canSelectMany: false,

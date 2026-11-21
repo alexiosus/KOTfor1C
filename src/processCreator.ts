@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -21,6 +22,8 @@ import { registerCreatedProjectScenario } from './projectLibraryIntegration';
 import { promptForNewTestCode } from './testNumbering';
 import { promptForProcessCreationProperties, applyCreationResponsible } from './scenarioCreationProperties';
 
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
+
 type ProcessAction = 'add' | 'done' | 'up' | 'down' | 'remove';
 type ProcessQuickPickItem = vscode.QuickPickItem & { action?: ProcessAction; index?: number };
 type ProcessStepQuickPickItem = vscode.QuickPickItem & { target: TestInfo };
@@ -41,7 +44,7 @@ async function pickProcessSteps(
             detail: info.relativePath, target: info
         }));
     if (!items.length) { throw new Error(t('No scenarios or processes are available for insertion.')); }
-    const selected = await vscode.window.showQuickPick(items, {
+    const selected = await kotUi.showQuickPick(items, {
         title: t('Process steps'), placeHolder: t('Select scenarios or processes for the process'),
         canPickMany: true, ignoreFocusOut: true
     });
@@ -65,7 +68,7 @@ function compilerStepTarget(target: TestInfo): CompilerProcessScenario {
 }
 
 async function requiredInput(t: Translator, prompt: string, initialValue?: string): Promise<string | undefined> {
-    const value = await vscode.window.showInputBox({
+    const value = await kotUi.showInputBox({
         title: t('New process'), prompt: t(prompt), value: initialValue, ignoreFocusOut: true,
         validateInput: input => !input.trim() || /[\r\n]/.test(input) ? t('Enter a non-empty single-line value.') : undefined
     });
@@ -96,7 +99,7 @@ export async function handleCreateProcess(
             throw new Error(t('A scenario or process named "{0}" already exists.', name));
         }
         const root = typeof resolveProcessScanRootFsPath === 'function' ? resolveProcessScanRootFsPath(workspace.uri) : resolveScenarioScanRootFsPath(workspace.uri);
-        const selectedFolders = await vscode.window.showOpenDialog({
+        const selectedFolders = await kotUi.showOpenDialog({
             canSelectFiles: false, canSelectFolders: true, canSelectMany: false,
             title: t('Select parent folder for process'), openLabel: t('Select folder'),
             defaultUri: vscode.Uri.file(root)
@@ -155,13 +158,13 @@ export async function handleCreateProcess(
         });
         await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(processUri));
         await vscode.commands.executeCommand('kotTestToolkit.refreshPhaseSwitcherFromCreate');
-        await vscode.window.showInformationMessage(t('Process "{0}" has been created successfully!', name));
+        await kotUi.showInformationMessage(t('Process "{0}" has been created successfully!', name));
         return processUri;
     } catch (error) {
         const message = (error as NodeJS.ErrnoException).code === 'EEXIST'
             ? t('Process destination already exists. Choose another code or parent folder.')
             : error instanceof Error ? error.message : String(error);
-        await vscode.window.showErrorMessage(t('Could not create process: {0}', message));
+        await kotUi.showErrorMessage(t('Could not create process: {0}', message));
         return undefined;
     }
 }
@@ -173,7 +176,7 @@ async function resolveProcessUri(target: vscode.Uri | TestInfo | undefined, t: T
     const workspace = vscode.workspace.workspaceFolders?.[0];
     if (!workspace) { throw new Error(t('Open a workspace to edit process steps.')); }
     const catalog = await scanWorkspaceForScenarioCatalog(workspace.uri);
-    const picked = await vscode.window.showQuickPick(catalog.all.filter(item => item.kind === 'process').map(process => ({
+    const picked = await kotUi.showQuickPick(catalog.all.filter(item => item.kind === 'process').map(process => ({
         label: process.name, description: process.processCode, detail: process.relativePath, process
     })), { title: t('Select process'), ignoreFocusOut: true });
     return picked?.process.yamlFileUri;
@@ -186,7 +189,7 @@ async function saveProcessSteps(document: vscode.TextDocument, source: string, v
     edit.replace(document.uri, new vscode.Range(document.positionAt(0), document.positionAt(source.length)), updated);
     if (!await vscode.workspace.applyEdit(edit) || !await document.save()) { throw new Error(t('Could not save process steps.')); }
     try { await vscode.commands.executeCommand('kotTestToolkit.refreshPhaseSwitcherFromCreate'); }
-    catch (error) { await vscode.window.showErrorMessage(t('Process steps were saved, but Test Manager could not refresh: {0}', error instanceof Error ? error.message : String(error))); }
+    catch (error) { await kotUi.showErrorMessage(t('Process steps were saved, but Test Manager could not refresh: {0}', error instanceof Error ? error.message : String(error))); }
     return true;
 }
 
@@ -211,7 +214,7 @@ export async function handleAddProcessSteps(context: vscode.ExtensionContext, ta
         const document = await vscode.workspace.openTextDocument(uri);
         await vscode.window.showTextDocument(document);
         return await addProcessSteps(document, t);
-    } catch (error) { await vscode.window.showErrorMessage(t('Could not edit process steps: {0}', error instanceof Error ? t(error.message) : String(error))); return false; }
+    } catch (error) { await kotUi.showErrorMessage(t('Could not edit process steps: {0}', error instanceof Error ? t(error.message) : String(error))); return false; }
 }
 
 /** Adds, removes or moves whole records, preserving existing parameter bindings and custom fields. */
@@ -236,7 +239,7 @@ export async function handleEditProcessSteps(
                 ...steps.map((step, index) => ({ label: `${index + 1}. ${step.name ?? step.scenarioName ?? step.processName ?? step.uid ?? ''}`, index })),
                 { label: t('Done'), action: 'done' }
             ];
-            const picked = await vscode.window.showQuickPick(items, { title: t('Process steps: {0}', descriptor.name ?? ''), ignoreFocusOut: true });
+            const picked = await kotUi.showQuickPick(items, { title: t('Process steps: {0}', descriptor.name ?? ''), ignoreFocusOut: true });
             if (!picked || picked.action === 'done') { return; }
             let updated = source;
             if (picked.action === 'add') {
@@ -250,7 +253,7 @@ export async function handleEditProcessSteps(
                     ...(index < steps.length - 1 ? [{ label: t('Move down'), action: 'down' as const }] : []),
                     { label: t('Remove step'), action: 'remove' }
                 ];
-                const action = await vscode.window.showQuickPick(actions, { title: picked.label, ignoreFocusOut: true });
+                const action = await kotUi.showQuickPick(actions, { title: picked.label, ignoreFocusOut: true });
                 if (!action) { continue; }
                 updated = action.action === 'remove' ? removeCompilerProcessStep(source, index)
                     : moveCompilerProcessStep(source, index, index + (action.action === 'up' ? -1 : 1));
@@ -259,6 +262,6 @@ export async function handleEditProcessSteps(
         }
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        await vscode.window.showErrorMessage(t('Could not edit process steps: {0}', message));
+        await kotUi.showErrorMessage(t('Could not edit process steps: {0}', message));
     }
 }

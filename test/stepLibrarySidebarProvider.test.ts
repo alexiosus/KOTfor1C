@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -158,6 +159,7 @@ function createHarness(options: HarnessOptions = {}) {
         module: moduleObject,
         exports: moduleObject.exports,
         require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === 'vscode') {
                 return vscode;
             }
@@ -173,7 +175,7 @@ function createHarness(options: HarnessOptions = {}) {
                 const controllerCompiled = ts.transpileModule(controllerSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
                 vm.runInNewContext(controllerCompiled, {
                     module: controllerModule, exports: controllerModule.exports,
-                    require: (name: string) => name === 'vscode' ? vscode : { createFeature: async () => undefined, generateFeatureJson: async () => undefined }
+                    require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === 'vscode' ? vscode : { createFeature: async () => undefined, generateFeatureJson: async () => undefined })
                 });
                 return controllerModule.exports;
             }

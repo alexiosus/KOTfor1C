@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -25,6 +26,7 @@ async function harness(t: test.TestContext) {
     vm.runInNewContext(compiled, {
         module: moduleObject, exports: moduleObject.exports, console, Buffer,
         require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === 'vscode') { return {
                 Uri: { file: uri },
                 workspace: { workspaceFolders: [{ uri: uri(root) }], getWorkspaceFolder: () => ({ uri: uri(root) }), getConfiguration: () => ({ get: (key: string, fallback?: unknown) => settings.get(key) ?? fallback }), openTextDocument: async (target: { fsPath: string }) => { opened.push(target.fsPath); return {}; } },

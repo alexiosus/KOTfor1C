@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -102,7 +103,7 @@ function harness() {
     const moduleObject = { exports: {} };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(process.cwd(), 'src/featureRenameCommands.ts'), 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-    }).outputText, { module: moduleObject, exports: moduleObject.exports, Buffer, require: (name: string) => dependencies[name] });
+    }).outputText, { module: moduleObject, exports: moduleObject.exports, Buffer, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name]) });
     const api = moduleObject.exports as {
         renameStandaloneFeatureTitle(resource: Uri): Promise<boolean>;
         renameStandaloneFeatureFile(resource: Uri, beforeRename?: () => Promise<void>): Promise<Uri | undefined>;

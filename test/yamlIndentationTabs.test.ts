@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,7 +16,7 @@ function loadModule(name: string, dependencies: Record<string, unknown>): Record
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
     }).outputText, {
         module, exports: module.exports,
-        require: (name: string) => dependencies[name] ?? {}, console
+        require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name] ?? {}), console
     });
     return module.exports;
 }

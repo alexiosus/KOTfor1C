@@ -14,7 +14,7 @@ test('collects only nested categories case-insensitively and preserves authored 
         { kind: 'nestedScenario', category: 'CRM' },
         { kind: 'exportScenario', category: 'Exports' },
         { kind: 'nestedScenario' }
-    ]), ['CRM', 'Продажи.Заказы']);
+    ]), ['CRM', 'Продажи.Заказы'].sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }) || left.localeCompare(right)));
 });
 
 test('builds Add or Change category action on nested scenario metadata', () => {

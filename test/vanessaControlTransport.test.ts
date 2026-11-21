@@ -177,8 +177,8 @@ test('progress is routed by the SDK token and carries counts without executing a
     assert.deepEqual(progress, [{ completed: 1, total: 3 }]);
 });
 
-test('client lifecycle and explicit form analysis can wait beyond the short read deadline without retrying', async t => {
-    for (const tool of ['manage_test_client', 'close_test_client', 'get_form_analysis']) {
+test('client lifecycle, form analysis and feature loading can wait beyond the short read deadline without retrying', async t => {
+    for (const tool of ['manage_test_client', 'close_test_client', 'get_form_analysis', 'open_feature_file', 'load_features']) {
         const fixture = server(); let entered!: () => void; let release!: () => void;
         const started = new Promise<void>(resolve => { entered = resolve; });
         const gate = new Promise<void>(resolve => { release = resolve; });

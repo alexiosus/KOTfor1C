@@ -805,7 +805,8 @@ test('Activity Bar views expose native title actions with an expanded 2:1 main l
         'kotTestToolkit.stepLibrary.relationshipsActive',
         'kotTestToolkit.toggleStepLibraryGroups',
         'kotTestToolkit.refreshStepLibrarySidebar',
-        'kotTestToolkit.openStepLibrary'
+        'kotTestToolkit.openStepLibrary',
+        'kotTestToolkit.generateLocalStepCatalog'
     ]);
     assert.deepEqual(commandsFor('kotTestToolkit.infobaseSidebarView'), [
         'kotTestToolkit.createInfobase',

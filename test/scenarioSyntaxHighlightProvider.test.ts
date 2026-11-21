@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
@@ -21,8 +22,8 @@ function load() {
     const module = { exports: {} as any }; const ts = require('typescript');
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/scenarioSyntaxHighlightProvider.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-    }).outputText, { module, exports: module.exports, Uint32Array, require: (name: string) => name === 'vscode' ? vscode
-        : name.endsWith('yamlValidator') ? { isScenarioYamlFile: () => true } : name.endsWith('blockKeywordParser') ? blocks : compiler });
+    }).outputText, { module, exports: module.exports, Uint32Array, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === 'vscode' ? vscode
+        : name.endsWith('yamlValidator') ? { isScenarioYamlFile: () => true } : name.endsWith('blockKeywordParser') ? blocks : compiler) });
     return module.exports;
 }
 

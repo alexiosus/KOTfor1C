@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -9,6 +10,7 @@ import * as vanessaDebugClientConfiguration from '../src/vanessaDebugClientConfi
 import * as vanessaLaunchJson from '../src/vanessaLaunchJson';
 import * as vanessaControlLaunch from '../src/vanessaControlLaunch';
 import * as oneCInfobaseConnection from '../src/oneCInfobaseConnection';
+import { loadSharedStartupPlatform } from './helpers/sharedStartupPlatformFixture';
 
 test('debug launch copies the built JSON safely without opening the auto-run infobase preparation flow', async () => {
     const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
@@ -44,7 +46,8 @@ test('debug launch copies the built JSON safely without opening the auto-run inf
     vm.runInNewContext(compiled, {
         module: moduleObject,
         exports: moduleObject.exports,
-        require: (specifier: string) => {
+        require: function requireDependency(specifier: string): unknown {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === 'vscode') {
                 return vscode;
             }
@@ -63,7 +66,10 @@ test('debug launch copies the built JSON safely without opening the auto-run inf
             if (specifier === './deferredLoader') {
                 return { createDeferredLoader: (factory: () => Promise<unknown>) => factory };
             }
-            if (specifier === './oneCPlatform.js') {
+            if (specifier === './sharedStartupPlatform.js') { return loadSharedStartupPlatform(requireDependency); }
+            if (specifier === './oneCInfobasePlatform') { return { runningOneCInfobasePlatform: async () => undefined }; }
+            if (specifier === './startupInfobase') { return { getSharedStartupInfobasePaths: () => ({ infobaseDirectory: tempDirectory }) }; }
+            if (specifier === './oneCPlatform.js' || specifier === './oneCPlatform') {
                 return {
                     resolveOneCPlatformForLaunch: async () => ({ clientExePath: executablePath }),
                     resolveOneCDesignerExePath: () => {
@@ -179,6 +185,7 @@ test('top-level debug opens standalone Vanessa without selecting a built scenari
         module: moduleObject,
         exports: moduleObject.exports,
         require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === 'vscode') {
                 return vscode;
             }
@@ -248,7 +255,8 @@ test('automated launch removes the stale log before arming tracking and starting
     vm.runInNewContext(compiled, {
         module: moduleObject,
         exports: moduleObject.exports,
-        require: (specifier: string) => {
+        require: function requireDependency(specifier: string): unknown {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === 'vscode') {
                 return vscode;
             }
@@ -267,7 +275,10 @@ test('automated launch removes the stale log before arming tracking and starting
             if (specifier === './deferredLoader') {
                 return { createDeferredLoader: (factory: () => Promise<unknown>) => factory };
             }
-            if (specifier === './oneCPlatform.js') {
+            if (specifier === './sharedStartupPlatform.js') { return loadSharedStartupPlatform(requireDependency); }
+            if (specifier === './oneCInfobasePlatform') { return { runningOneCInfobasePlatform: async () => undefined }; }
+            if (specifier === './startupInfobase') { return { getSharedStartupInfobasePaths: () => ({ infobaseDirectory: tempDirectory }) }; }
+            if (specifier === './oneCPlatform.js' || specifier === './oneCPlatform') {
                 return {
                     resolveOneCPlatformForLaunch: async () => ({ clientExePath: executablePath }),
                     resolveOneCDesignerExePath: () => executablePath

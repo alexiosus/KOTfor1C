@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs';
@@ -74,7 +75,7 @@ function commandHarness(shared = true) {
     const module = { exports: {} as any };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(process.cwd(), 'src/scenarioCategoryCodeLens.ts'), 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-    }).outputText, { module, exports: module.exports, require: (name: string) => dependencies[name], console });
+    }).outputText, { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name]), console });
     return { api: module.exports, document, patches, edits, commands, warnings, errors, initialValues,
         main: () => { main = true; }, mutateDuringPrompt: () => { mutateDuringPrompt = true; } };
 }

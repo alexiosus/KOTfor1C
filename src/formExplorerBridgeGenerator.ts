@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as cp from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -28,6 +29,8 @@ import {
     updateManagedInfobaseMetadata
 } from './infobaseManager';
 import { formatProcessCommandForDisplay } from './processCommandDisplay';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
@@ -150,7 +153,7 @@ export async function handleStartFormExplorerBridge(
     const t = await getTranslator(context.extensionUri);
 
     if (process.platform !== 'win32') {
-        vscode.window.showErrorMessage(
+        kotUi.showErrorMessage(
             t('Form Explorer Bridge is supported only on Windows where 1C client is available.')
         );
         return { status: 'error', targetInfobasePath: null, error: t('Form Explorer Bridge is supported only on Windows.'), workingProcessId: null, startupProcessId: null };
@@ -304,7 +307,7 @@ export async function handleStartFormExplorerBridge(
         );
 
         // ── 11. done ─────────────────────────────────────────────────────────
-        vscode.window.showInformationMessage(
+        kotUi.showInformationMessage(
             t('Form Explorer Bridge started for: {0}', describeInfobaseConnection(targetInfobasePath))
         );
         await updateManagedInfobaseMetadata(context, targetInfobasePath, {
@@ -327,7 +330,7 @@ export async function handleStartFormExplorerBridge(
         const message = error instanceof Error ? error.message : String(error);
         channel.appendLine(t('Failed to start Form Explorer Bridge: {0}', message));
         if (!(error instanceof Error && 'alreadyShownToUser' in error && (error as Error & { alreadyShownToUser?: boolean }).alreadyShownToUser)) {
-            vscode.window.showErrorMessage(t('Failed to start Form Explorer Bridge: {0}', message));
+            kotUi.showErrorMessage(t('Failed to start Form Explorer Bridge: {0}', message));
         }
         return {
             status: 'error',

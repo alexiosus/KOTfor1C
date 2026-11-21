@@ -1,15 +1,22 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import { getGherkinInsertionContext } from './gherkinInsertionContext';
 import { readNativeScenarioMetadata } from './spprScenarioFiles';
 import { VanessaAuthoringError, prepareVanessaDraftInsertion, type VanessaInsertionTarget, type VanessaRecordingToken } from './vanessaControlAuthoring';
 import type { VanessaControlSession } from './vanessaControlSession';
 
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
+
+export interface VanessaAuthoringCommands {
+    read(): { recording: boolean; uncertain: boolean; generation: number; pending: string | null; retained: readonly string[]; lastResult: string | null };
+}
+
 /** Results go to the current scenario as one undoable edit; no transient document or mandatory draft workflow. */
 export function registerVanessaAuthoringCommands(context: vscode.ExtensionContext, session: VanessaControlSession, ensureConnected: () => Promise<boolean>,
-    formatChecks: (text: string) => Promise<string> = async text => text): void {
+    formatChecks: (text: string) => Promise<string> = async text => text): VanessaAuthoringCommands {
     let capture: VanessaRecordingToken | undefined; let uncertain = false; let working = false; let generation = session.snapshot.generation;
     let lastObserved = session.snapshot.observed;
-    let pending: string | undefined; let lastEditor = vscode.window.activeTextEditor;
+    let pending: string | undefined; let lastResult: string | undefined; let lastEditor = vscode.window.activeTextEditor;
     const retained: string[] = [];
     const retain = (text?: string) => { if (text?.trim() && text !== pending && !retained.includes(text)) { retained.push(text); } };
     const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 9);
@@ -43,10 +50,10 @@ export function registerVanessaAuthoringCommands(context: vscode.ExtensionContex
         } else { status.hide(); }
     };
     const report = async (title: string, work: () => Promise<void>) => {
-        if (working) { void vscode.window.showInformationMessage(vscode.l10n.t('A Vanessa request is still in progress.')); return; }
+        if (working) { void kotUi.showInformationMessage(vscode.l10n.t('A Vanessa request is still in progress.')); return; }
         working = true;
-        try { await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t(title) }, work); }
-        catch (error) { void vscode.window.showErrorMessage(vscode.l10n.t(error instanceof VanessaAuthoringError ? error.message : 'Vanessa authoring was not confirmed. Refresh the session and retry.')); }
+        try { await kotUi.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t(title) }, work); }
+        catch (error) { void kotUi.showErrorMessage(vscode.l10n.t(error instanceof VanessaAuthoringError ? error.message : 'Vanessa authoring was not confirmed. Refresh the session and retry.')); }
         finally { working = false; render(); }
     };
     const insert = async () => {
@@ -64,7 +71,8 @@ export function registerVanessaAuthoringCommands(context: vscode.ExtensionContex
         if (pending === text) { pending = undefined; } else if (retained.at(-1) === text) { retained.pop(); }
     };
     const apply = async (text: string) => {
-        if (!text.trim()) { void vscode.window.showInformationMessage(vscode.l10n.t('No steps were captured.')); return; }
+        if (!text.trim()) { void kotUi.showInformationMessage(vscode.l10n.t('No steps were captured.')); return; }
+        lastResult = text;
         const previous = pending; pending = undefined; retain(previous); pending = text; await insert();
     };
     const generate = (kind: 'checks' | 'suggestions') => report(kind === 'checks' ? 'Vanessa: generating form checks…' : 'Vanessa: reading current element steps…', async () => {
@@ -72,7 +80,8 @@ export function registerVanessaAuthoringCommands(context: vscode.ExtensionContex
         if (!await ensureConnected()) { return; }
         const raw = await session.withAuthoringControl(authoring => authoring.formSteps(kind));
         const text = kind === 'checks' ? await formatChecks(raw) : raw;
-        if (!text.trim()) { void vscode.window.showInformationMessage(vscode.l10n.t('No steps were captured.')); return; }
+        lastResult = text;
+        if (!text.trim()) { void kotUi.showInformationMessage(vscode.l10n.t('No steps were captured.')); return; }
         const previous = pending; pending = undefined; retain(previous); pending = text;
         results.clear(); results.append(text); results.show(true);
     });
@@ -88,7 +97,7 @@ export function registerVanessaAuthoringCommands(context: vscode.ExtensionContex
             }
             if (capture !== own || session.snapshot.generation !== own.generation) { return; }
             capture = undefined; uncertain = false;
-            if (text === null) { void vscode.window.showInformationMessage(vscode.l10n.t('Recording was stopped in Vanessa. Its generated text remains in Vanessa.')); }
+            if (text === null) { void kotUi.showInformationMessage(vscode.l10n.t('Recording was stopped in Vanessa. Its generated text remains in Vanessa.')); }
             else { await apply(text); }
         });
     context.subscriptions.push(status, results,
@@ -97,10 +106,11 @@ export function registerVanessaAuthoringCommands(context: vscode.ExtensionContex
             const observedChanged = lastObserved !== session.snapshot.observed; lastObserved = session.snapshot.observed;
             if (generation !== session.snapshot.generation) { capture = undefined; uncertain = false; generation = session.snapshot.generation; }
             else if (!working && capture && observedChanged && session.snapshot.observed?.recording === false) {
+                if (session.snapshot.capabilities?.recordingResult?.supported) { void stopCapture(); render(); return; }
                 // An external Stop is already confirmed. Another RPC could stop
                 // a newer recording started since this observation.
                 capture = undefined; uncertain = false;
-                void vscode.window.showInformationMessage(vscode.l10n.t('Recording was stopped in Vanessa. Its generated text remains in Vanessa.'));
+                void kotUi.showInformationMessage(vscode.l10n.t('Recording was stopped in Vanessa. Its generated text remains in Vanessa.'));
             }
             render();
         }),
@@ -113,7 +123,7 @@ export function registerVanessaAuthoringCommands(context: vscode.ExtensionContex
                 const token = await session.withAuthoringControl(authoring => authoring.start());
                 if (session.snapshot.generation === ownGeneration) {
                     capture = token; uncertain = false; retain(token.previousSteps);
-                    if (token.previousSteps) { void vscode.window.showInformationMessage(vscode.l10n.t('Previous recorded steps were preserved. Use Insert captured steps here or Copy captured steps to retrieve them.')); }
+                    if (token.previousSteps) { void kotUi.showInformationMessage(vscode.l10n.t('Previous recorded steps were preserved. Use Insert captured steps here or Copy captured steps to retrieve them.')); }
                 }
             }
             catch (error) {
@@ -123,8 +133,16 @@ export function registerVanessaAuthoringCommands(context: vscode.ExtensionContex
         })),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.recording.stop', stopCapture),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.formChecks', () => generate('checks')),
+        vscode.commands.registerCommand('kotTestToolkit.vanessaControl.elementChecks', (elementName?: string, tableName?: string) => report('Reading Vanessa steps…', async () => {
+            if (!await ensureConnected() || !session.snapshot.capabilities?.elementSteps?.supported) { return; }
+            const text = await session.withAuthoringControl(authoring => authoring.elementSteps('checks', elementName, tableName));
+            lastResult = text;
+            const previous = pending; pending = undefined; retain(previous); pending = text;
+            results.clear(); results.append(text); results.show(true);
+        })),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.formSuggestions', () => generate('suggestions')),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.recording.insertHere', () => report('Vanessa: inserting steps…', insert)),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.recording.copy', async () => { const text = pending ?? retained.at(-1); if (text) { await vscode.env.clipboard.writeText(text); } }));
     render();
+    return { read: () => ({ recording: !!capture, uncertain, generation, pending: pending ?? null, retained: [...retained], lastResult: lastResult ?? null }) };
 }

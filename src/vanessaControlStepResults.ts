@@ -1,5 +1,6 @@
 import { collectGherkinExecutableLines } from './gherkinAnnotations';
 import { vanessaFormReplyText } from './vanessaControlForms';
+import { readVanessaStructuredReply, sameVanessaFeaturePath } from './vanessaControlProtocol';
 export interface VanessaExecutionLine { readonly lineNumber: number; readonly status: 'running' | 'passed' | 'failed' | 'stopped' | 'unknown' | 'skipped' }
 export interface VanessaResultStepSource { readonly lineNumber: number; readonly text: string }
 export interface VanessaResultSourceMap {
@@ -7,7 +8,26 @@ export interface VanessaResultSourceMap {
     isCurrent(): Promise<boolean>;
 }
 /** Without line IDs, only unique text or a unique ordered alignment proves a source occurrence. */
-export function mapVanessaStepResults(reply: unknown, source: string, firstLine = 1, scenarioName?: string, expandedSteps?: readonly VanessaResultStepSource[]): VanessaExecutionLine[] {
+export function mapVanessaStepResults(reply: unknown, source: string, firstLine = 1, scenarioName?: string, expandedSteps?: readonly VanessaResultStepSource[], filePath?: string): VanessaExecutionLine[] {
+    const structured = readVanessaStructuredReply(reply);
+    if (structured) {
+        if (!structured.ok || structured.isRunning !== false || structured.isComplete !== true || !Array.isArray(structured.steps) ||
+            !filePath || typeof structured.featurePath !== 'string' || !sameVanessaFeaturePath(filePath, structured.featurePath)) { return []; }
+        const lines = source.split(/\r\n|\r|\n/u);
+        const normalize = (text: string) => text.trim().replace(/^(?:\*\s*)?(?:К тому же|Допустим|Given|When|Then|And|But|Дано|Затем|Пусть|Когда|Тогда|Если|То|И|Но|А|Также|Иначе)\s+/iu, '').toLocaleLowerCase();
+        const byLine = new Map<number, VanessaExecutionLine['status']>();
+        const statuses: Record<string, VanessaExecutionLine['status']> = { success: 'passed', failed: 'failed', broken: 'stopped', skipped: 'skipped', pending: 'unknown' };
+        for (const value of structured.steps) {
+            if (!value || typeof value !== 'object') { return []; }
+            const row = value as Record<string, unknown>; const line = row.lineNumber;
+            if (typeof line !== 'number' || !Number.isSafeInteger(line) || line < firstLine || line > lines.length ||
+                typeof row.name !== 'string' || typeof row.status !== 'string' || !statuses[row.status] ||
+                normalize(row.name) !== normalize(lines[line - 1])) { continue; }
+            const previous = byLine.get(line); const status = statuses[row.status];
+            byLine.set(line, previous === 'failed' || status === 'failed' ? 'failed' : previous && previous !== status ? 'unknown' : status);
+        }
+        return [...byLine].map(([lineNumber, status]) => ({ lineNumber, status })).sort((a, b) => a.lineNumber - b.lineNumber);
+    }
     let text: string;
     try { text = vanessaFormReplyText(reply); } catch { return []; }
     if (!text.startsWith('# Результаты тестов\n')) { return []; }

@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,7 +22,7 @@ test('full infobase manager receives live process activity and shares the templa
     };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(process.cwd(), 'src/infobaseManagerPanel.ts'), 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-    }).outputText, { module, exports: module.exports, require: (name: string) => dependencies[name] ?? {}, console });
+    }).outputText, { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name] ?? {}), console });
     const context = { workspaceState: { get: (_key: string, fallback: unknown) => fallback, update: async () => {} } };
     const panel = new module.exports.InfobaseManagerPanel(context, service);
     panel.panel = { webview: { postMessage: async (value: unknown) => messages.push(value) } };

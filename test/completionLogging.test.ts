@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import { isUserStepAvailable } from '../src/projectDefinition';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -39,6 +40,7 @@ test('project definition completion logging does not grow with the number of mat
         module: moduleObject,
         exports: moduleObject.exports,
         require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === './projectDefinition') { return { isUserStepAvailable }; }
             if (specifier === 'vscode') {
                 return vscode;
@@ -151,6 +153,7 @@ test('Feature IntelliSense offers structural Gherkin keywords outside a scenario
         module: moduleObject,
         exports: moduleObject.exports,
         require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === './projectDefinition') { return { isUserStepAvailable }; }
             if (specifier === 'vscode') {
                 return vscode;

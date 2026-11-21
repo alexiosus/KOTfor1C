@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,6 +17,7 @@ function harness(initial: Record<string, string> = {}) {
         update: async (key: string, value: string) => { state.set(key, value); } } };
     const module = { exports: {} };
     vm.runInNewContext(compiled, { module, exports: module.exports, require: (name: string) => {
+            if (name === './kotInteraction') { return nativeInteraction; }
         if (name === 'vscode') { return { EventEmitter: class { event = () => ({ dispose() {} }); fire() {} },
             workspace: { getConfiguration: () => ({ get: () => undefined }) } }; }
         if (name === './yamlParameterDefaults') { return defaults; }

@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import { projectFormat } from './projectFormat';
 import { readLegacyMetadata } from './projectLegacyMetadata';
 import { stringify } from 'yaml';
@@ -22,6 +23,8 @@ import { isCompilerYamlFile } from './yamlValidator';
 import { ScenarioPropertiesAttachments } from './scenarioPropertiesAttachments';
 import type { ScenarioFilesService } from './scenarioFilesService';
 import { onDidConvertScenarioFormat } from './spprScenarioFiles.js';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 const protocol = require('../media/scenarioPropertiesProtocol.js') as {
     DEFAULT_LABELS: Record<string, string>;
@@ -309,6 +312,9 @@ function escapeHtml(value: string): string {
 export const SCENARIO_PROPERTIES_VIEW = 'kotTestToolkit.scenarioProperties';
 
 export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vscode.Disposable {
+    createApiControllers(): { session: ScenarioPropertiesSession; feature?: FeaturePropertiesController } {
+        return { session: new ScenarioPropertiesSession(this.host), feature: this.library?.createFeatureController(this.host) };
+    }
     private readonly host: ScenarioPropertiesNativeHost;
     private readonly session: ScenarioPropertiesSession;
     private readonly t: Translator;
@@ -427,7 +433,7 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
                 if (this.disposed) { return; }
                 await this.ensurePanel();
                 await this.post(errorText(reason));
-                void vscode.window.showErrorMessage(this.t(errorText(reason)));
+                void kotUi.showErrorMessage(this.t(errorText(reason)));
             }
         });
     }
@@ -456,7 +462,7 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
                 const source = await this.host.readDocument(uri); const model = readScenarioProperties(source.text);
                 return model.kind === 'scenario' || model.kind === 'process';
             },
-            chooseFiles: async sourceUri => (await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectFolders: false, canSelectMany: true,
+            chooseFiles: async sourceUri => (await kotUi.showOpenDialog({ canSelectFiles: true, canSelectFolders: false, canSelectMany: true,
                 defaultUri: vscode.Uri.file(path.dirname(vscode.Uri.parse(sourceUri, true).fsPath)), openLabel: this.t('Add files') }))?.map(uri => uri.toString()),
             insertFileName: async (name, stillCurrent) => {
                 const editor = vscode.window.activeTextEditor;

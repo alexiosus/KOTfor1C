@@ -1,13 +1,16 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { createHash } from 'node:crypto';
+import { redactVanessaDiagnosticText } from './vanessaControlRedaction';
 import { getExtensionUri } from './appContext';
 import { updateScenarioScanRoot, updateProcessScanRoot, getScenarioScanRootPath } from './scenarioScanRoot';
 import { getDefaultModelDbSettingsValue } from './etalonBases';
 import { applyCompilerProfileDefaults, getDefaultAdditionalVanessaParameters } from './yamlParameterDefaults';
 import type { AdditionalParameterValueKind } from './vanessaLaunchJson';
 import { collectCompilerBuildValueIssues, getCompilerBuildValueHint, type CompilerBuildValueHint } from './compilerBuildValueValidation';
+import { formatPickedParameterPath, getBuildParameterPathField, getParameterPathField, mergePickedParameterPaths, type ParameterPathField } from './yamlParameterPaths';
 import {
     compilerCreatesLaunchJson,
     getCompilerBuildParameterValue,
@@ -27,6 +30,8 @@ import {
     type ActiveYamlParametersProfile,
     type ActiveYamlParametersProfileChangeEvent
 } from './activeYamlParametersProfile';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 export type {
     ActiveYamlParametersProfile,
@@ -68,6 +73,7 @@ interface BuildParameterDefinition extends Partial<CompilerBuildValueHint> {
     key: string;
     description: string;
     fixed?: boolean;
+    pathField?: ParameterPathField;
 }
 
 interface YamlParametersProfile {
@@ -108,6 +114,7 @@ export class YamlParametersManager {
     private readonly storageKey: string;
     private readonly projectRoot: string | undefined;
     private projectSeed: Promise<string | undefined> | undefined;
+    private parametersPanel: vscode.WebviewPanel | undefined;
     private readonly activeProfileChangeEmitter = new vscode.EventEmitter<ActiveYamlParametersProfileChangeEvent>();
     public readonly onDidChangeActiveProfile = this.activeProfileChangeEmitter.event;
 
@@ -447,6 +454,7 @@ export class YamlParametersManager {
         definitions.forEach(definition => {
             const hint = getCompilerBuildValueHint(definition.key);
             if (hint) { Object.assign(definition, hint); }
+            definition.pathField = getBuildParameterPathField(definition.key);
         });
 
         return definitions;
@@ -471,6 +479,45 @@ export class YamlParametersManager {
             return null;
         }
         return workspaceFolders[0].uri.fsPath;
+    }
+
+    private async pickParameterPath(message: { section: string; key: string; value: string }): Promise<string | undefined> {
+        if (typeof message.key !== 'string' || typeof message.value !== 'string') { return; }
+        const field = getParameterPathField(message.section, message.key, message.value);
+        if (!field) { return; }
+        const root = this.getWorkspaceRootPath();
+        let kind = field.kind;
+        if (kind === 'choice') {
+            const choice = await kotUi.showQuickPick([
+                { label: this.t('File…'), pathKind: 'file' as const },
+                { label: this.t('Folder…'), pathKind: 'folder' as const }
+            ], { title: this.t('Browse…') });
+            if (!choice) { return; }
+            kind = choice.pathKind;
+        }
+        // Validate arrays before opening a picker; never replace a malformed draft.
+        mergePickedParameterPaths(message.value, [], field);
+        let initial = message.value;
+        if (field.multiple === 'json') { initial = (JSON.parse(initial || '[]') as string[])[0] ?? ''; }
+        if (field.multiple === 'pipe') { initial = initial.split('|')[0]; }
+        let initialPath = initial && !initial.includes('$') ? path.resolve(root || '', initial) : root;
+        if (field.save) {
+            const uri = await kotUi.showSaveDialog({ title: this.t('Browse…'), saveLabel: this.t('Select'),
+                defaultUri: initialPath ? vscode.Uri.file(initialPath) : undefined });
+            return uri ? formatPickedParameterPath(uri.fsPath, root, field) : undefined;
+        }
+        while (initialPath && !fs.existsSync(initialPath)) {
+            const parent = path.dirname(initialPath);
+            if (parent === initialPath) { initialPath = root; break; }
+            initialPath = parent;
+        }
+        const uris = await kotUi.showOpenDialog({
+            title: this.t('Browse…'), openLabel: this.t('Select'),
+            canSelectFiles: kind === 'file', canSelectFolders: kind === 'folder', canSelectMany: Boolean(field.multiple),
+            defaultUri: initialPath ? vscode.Uri.file(initialPath) : undefined
+        });
+        if (!uris?.length) { return; }
+        return mergePickedParameterPaths(message.value, uris.map(uri => formatPickedParameterPath(uri.fsPath, root, field)), field);
     }
 
     private isSameOrNestedPath(candidatePath: string, basePath: string): boolean {
@@ -815,7 +862,7 @@ export class YamlParametersManager {
                 return saved;
             } catch (error) {
                 if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-                    void vscode.window.showWarningMessage(this.t('Could not load initial project profiles from {0}: {1}', file, String(error)));
+                    void kotUi.showWarningMessage(this.t('Could not load initial project profiles from {0}: {1}', file, String(error)));
                 }
                 return undefined;
             }
@@ -887,10 +934,11 @@ export class YamlParametersManager {
         return this.getDefaultState();
     }
 
-    private async saveParametersState(state: YamlParametersState): Promise<void> {
+    private async saveParametersState(state: YamlParametersState, expectedState?: YamlParametersState): Promise<void> {
         // Preserve request order when an autosave and a profile selection overlap.
         const save = this.parametersSaveQueue.then(async () => {
             const previousState = await this.loadParametersState();
+            if (expectedState && JSON.stringify(previousState) !== JSON.stringify(expectedState)) { throw new Error('Build profiles changed. Read the current launch settings before retrying.'); }
             const normalizedProfiles = this.normalizeProfiles(state.profiles);
             const activeProfileId = normalizedProfiles.some(profile => profile.id === state.activeProfileId)
                 ? state.activeProfileId
@@ -1066,13 +1114,73 @@ export class YamlParametersManager {
         return true;
     }
 
+    /** Same profile normalization, concurrency guard and persistence used by the native manager. */
+    public async apiProfiles(action: 'read' | 'select' | 'create' | 'duplicate' | 'rename' | 'delete' | 'update', input: Record<string, unknown> = {}): Promise<unknown> {
+        const state = await this.loadParametersState();
+        const revision = createHash('sha256').update(JSON.stringify(state)).digest('hex');
+        if (action === 'read') {
+            const visible = <T extends YamlParameter>(rows: T[]) => rows.map(row => ({ ...row,
+                value: /password|пароль|secret|token/iu.test(row.key) ? undefined : redactVanessaDiagnosticText(row.value),
+                ...(/password|пароль|secret|token/iu.test(row.key) ? { hasSecret: !!row.value } : {}) }));
+            return { revision, activeProfileId: state.activeProfileId, profiles: state.profiles.map(profile => ({ id: profile.id, name: profile.name,
+                buildParameters: visible(profile.buildParameters), additionalVanessaParameters: visible(profile.additionalVanessaParameters), globalVanessaVariables: visible(profile.globalVanessaVariables) })) };
+        }
+        if (input.expectedRevision !== revision) { throw new Error('Profiles changed. Read profiles.read again.'); }
+        const id = input.profileId as string ?? state.activeProfileId;
+        const selected = state.profiles.find(profile => profile.id === id);
+        if (!selected) { throw new Error('Unknown profile ID.'); }
+        const name = typeof input.name === 'string' ? input.name.trim() : '';
+        if (['create', 'duplicate', 'rename'].includes(action) && (!name || name.length > 200)) { throw new Error('Choose a non-empty profile name up to 200 characters.'); }
+        let next = state;
+        if (action === 'select') { next = { ...state, activeProfileId: id }; }
+        if (action === 'create' || action === 'duplicate') {
+            const profileId = this.createGeneratedProfileId(state.profiles);
+            const profile = action === 'create' ? this.createDefaultProfile(profileId, name) : this.cloneProfile(selected, { id: profileId, name });
+            next = { activeProfileId: profile.id, profiles: [...state.profiles, profile] };
+        }
+        if (action === 'rename') { next = { ...state, profiles: state.profiles.map(profile => profile.id === id ? { ...profile, name } : profile) }; }
+        if (action === 'delete') {
+            if (state.profiles.length < 2) { throw new Error('At least one profile must remain.'); }
+            const profiles = state.profiles.filter(profile => profile.id !== id);
+            next = { profiles, activeProfileId: state.activeProfileId === id ? profiles[0].id : state.activeProfileId };
+        }
+        if (action === 'update') {
+            const merge = <T extends YamlParameter>(current: T[], supplied: unknown): T[] => {
+                if (supplied === undefined) { return current; }
+                if (!Array.isArray(supplied)) { throw new Error('Profile parameters must be an array.'); }
+                const rows = new Map(current.map(row => [row.key, row]));
+                for (const row of supplied as Array<T & { remove?: boolean }>) {
+                    if (!row || typeof row.key !== 'string') { throw new Error('Invalid profile parameter.'); }
+                    if (row.remove) { rows.delete(row.key); continue; }
+                    const { remove: _remove, ...values } = row;
+                    const updated = { ...rows.get(row.key), ...values } as T;
+                    if (typeof updated.value !== 'string') { throw new Error('A new parameter requires its value.'); }
+                    rows.set(row.key, updated);
+                }
+                return [...rows.values()];
+            };
+            const updated = { ...selected,
+                buildParameters: this.normalizeBuildParametersForUi(this.normalizeParameters(merge(selected.buildParameters, input.buildParameters))),
+                additionalVanessaParameters: this.normalizeAdditionalVanessaParameters(merge(selected.additionalVanessaParameters, input.additionalVanessaParameters)),
+                globalVanessaVariables: this.normalizeGlobalVanessaVariables(merge(selected.globalVanessaVariables, input.globalVanessaVariables)) };
+            next = { ...state, profiles: state.profiles.map(profile => profile.id === id ? updated : profile) };
+        }
+        await this.saveParametersState(next, state);
+        await this.syncYamlSourceDirectorySettingFromBuildParameters(this.getActiveProfileFromState(next).buildParameters);
+        await vscode.commands.executeCommand('kotTestToolkit.refreshCombinedRunJsonArtifacts');
+        return this.apiProfiles('read');
+    }
+
     /**
      * Сохраняет build-параметры в SecretStorage (совместимость со старым API)
      */
-    public async saveParameters(parameters: YamlParameter[]): Promise<void> {
+    public async saveParameters(parameters: YamlParameter[], expectedProfile?: ActiveYamlParametersProfile): Promise<void> {
         try {
             const state = await this.loadParametersState();
             const activeProfile = this.getActiveProfileFromState(state);
+            if (expectedProfile && JSON.stringify(createActiveYamlParametersProfileSnapshot(state)) !== JSON.stringify(expectedProfile)) {
+                throw new Error('The active build profile changed. Read the current launch settings before retrying.');
+            }
             await this.saveParametersState({
                 activeProfileId: activeProfile.id,
                 profiles: state.profiles.map(profile => profile.id === activeProfile.id
@@ -1081,7 +1189,7 @@ export class YamlParametersManager {
                         buildParameters: this.normalizeBuildParametersForUi(this.normalizeParameters(parameters))
                     }
                     : profile)
-            });
+            }, expectedProfile ? state : undefined);
         } catch (error) {
             console.error('Error saving build scenario parameters:', error);
             throw error;
@@ -1232,7 +1340,11 @@ export class YamlParametersManager {
     /**
      * Открывает панель управления YAML параметрами
      */
-    public async openYamlParametersPanel(): Promise<void> {
+    public async openYamlParametersPanel(initialTab: 'build' | 'additional' = 'build'): Promise<void> {
+        if (this.parametersPanel) {
+            this.parametersPanel.reveal();
+            await this.parametersPanel.webview.postMessage({ command: 'selectTab', tab: initialTab }); return;
+        }
         await this.loadLocalizationBundleIfNeeded();
 
         const panel = vscode.window.createWebviewPanel(
@@ -1247,6 +1359,8 @@ export class YamlParametersManager {
                 ]
             }
         );
+        this.parametersPanel = panel;
+        panel.onDidDispose(() => { if (this.parametersPanel === panel) { this.parametersPanel = undefined; } });
 
         const state = await this.loadParametersState();
         const activeProfile = this.getActiveProfileFromState(state);
@@ -1256,7 +1370,8 @@ export class YamlParametersManager {
             activeProfile.additionalVanessaParameters,
             activeProfile.globalVanessaVariables,
             state.activeProfileId,
-            state.profiles
+            state.profiles,
+            initialTab
         );
         panel.webview.html = html;
 
@@ -1277,6 +1392,28 @@ export class YamlParametersManager {
         panel.webview.onDidReceiveMessage(
             async (message) => {
                 switch (message.command) {
+                    case 'pickParameterPath': {
+                        let value: string | undefined;
+                        try { value = await this.pickParameterPath(message); }
+                        catch { void kotUi.showErrorMessage(this.t('Could not select the parameter path. Check the current value and try again.')); }
+                        finally { await panel.webview.postMessage({ command: 'parameterPathPicked', requestId: message.requestId, value }); }
+                        break;
+                    }
+                    case 'openVanessaSessionSettings': {
+                        try {
+                            const root = this.getWorkspaceRootPath();
+                            const parameters = this.normalizeAdditionalVanessaParameters(message.additionalVanessaParameters);
+                            const { applyAdditionalVanessaParameters } = await import('./vanessaLaunchJson.js');
+                            const payload = applyAdditionalVanessaParameters({}, parameters.map(parameter => ({ ...parameter, overrideExisting: true }))).value;
+                            await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.settings', root ? {
+                                profileName: typeof message.profileName === 'string' ? message.profileName : '',
+                                parameters: JSON.stringify(payload, null, 2), basePath: root
+                            } : undefined);
+                        } catch {
+                            void kotUi.showErrorMessage(this.t('The Vanessa settings operation was not confirmed. Refresh the connection and review the active settings.'));
+                        } finally { await panel.webview.postMessage({ command: 'vanessaSessionSettingsClosed' }); }
+                        break;
+                    }
                     case 'inspectModelDbSettings': {
                         const parameters = this.normalizeParameters(message.parameters);
                         const root = this.getWorkspaceRootPath();
@@ -1328,7 +1465,7 @@ export class YamlParametersManager {
                                 kind: 'error',
                                 message: this.t('Auto-save failed: {0}', String(error))
                             });
-                            vscode.window.showErrorMessage(this.t('Error saving parameters: {0}', String(error)));
+                            kotUi.showErrorMessage(this.t('Error saving parameters: {0}', String(error)));
                         }
                         break;
                     case 'autoSaveParameters':
@@ -1362,12 +1499,12 @@ export class YamlParametersManager {
                         try {
                             const workspaceFolders = vscode.workspace.workspaceFolders;
                             if (!workspaceFolders || workspaceFolders.length === 0) {
-                                vscode.window.showErrorMessage(this.t('No workspace folder is open'));
+                                kotUi.showErrorMessage(this.t('No workspace folder is open'));
                                 return;
                             }
 
                             // Предлагаем выбрать место для сохранения
-                            const uri = await vscode.window.showSaveDialog({
+                            const uri = await kotUi.showSaveDialog({
                                 title: this.t('Save SPPR compilation parameters File'),
                                 filters: {
                                     [this.t('JSON Files')]: ['json']
@@ -1380,7 +1517,7 @@ export class YamlParametersManager {
                                 await this.createYamlParametersFile(uri.fsPath, buildParameters);
 
                                 // Показываем уведомление с кнопками
-                                const action = await vscode.window.showInformationMessage(
+                                const action = await kotUi.showInformationMessage(
                                     this.t('Build scenario parameters file created at: {0}', uri.fsPath),
                                     this.t('Open File'),
                                     this.t('Open Folder')
@@ -1395,7 +1532,7 @@ export class YamlParametersManager {
                                 }
                             }
                         } catch (error) {
-                            vscode.window.showErrorMessage(this.t('Error creating JSON file: {0}', String(error)));
+                            kotUi.showErrorMessage(this.t('Error creating JSON file: {0}', String(error)));
                         }
                         break;
                     case 'openGeneratedYamlParametersFile':
@@ -1405,7 +1542,7 @@ export class YamlParametersManager {
                             );
                             await this.openGeneratedYamlParametersFile(buildParameters);
                         } catch (error) {
-                            vscode.window.showErrorMessage(this.t('Error opening generated yaml_parameters.json: {0}', String(error)));
+                            kotUi.showErrorMessage(this.t('Error opening generated yaml_parameters.json: {0}', String(error)));
                         }
                         break;
                     case 'manageProfiles':
@@ -1423,7 +1560,7 @@ export class YamlParametersManager {
                         break;
                     case 'loadBuildFromJson':
                         try {
-                            const uris = await vscode.window.showOpenDialog({
+                            const uris = await kotUi.showOpenDialog({
                                 title: this.t('Load SPPR compilation parameters from JSON'),
                                 filters: {
                                     [this.t('JSON Files')]: ['json']
@@ -1446,18 +1583,18 @@ export class YamlParametersManager {
                                         buildParameters: this.normalizeBuildParametersForUi(buildParameters)
                                     });
 
-                                    vscode.window.showInformationMessage(this.t('Loaded {0} parameters from {1}', buildParameters.length.toString(), path.basename(filePath)));
+                                    kotUi.showInformationMessage(this.t('Loaded {0} parameters from {1}', buildParameters.length.toString(), path.basename(filePath)));
                                 } else {
-                                    vscode.window.showErrorMessage(this.t('Invalid JSON format. Expected key-value object.'));
+                                    kotUi.showErrorMessage(this.t('Invalid JSON format. Expected key-value object.'));
                                 }
                             }
                         } catch (error) {
-                            vscode.window.showErrorMessage(this.t('Error loading JSON file: {0}', String(error)));
+                            kotUi.showErrorMessage(this.t('Error loading JSON file: {0}', String(error)));
                         }
                         break;
                     case 'createAdditionalJsonFile':
                         try {
-                            const uri = await vscode.window.showSaveDialog({
+                            const uri = await kotUi.showSaveDialog({
                                 title: this.t('Save Additional Vanessa Parameters File'),
                                 filters: {
                                     [this.t('JSON Files')]: ['json']
@@ -1469,7 +1606,7 @@ export class YamlParametersManager {
                                 const additionalParameters = this.normalizeAdditionalVanessaParameters(message.additionalVanessaParameters);
                                 await this.createAdditionalVanessaParametersFile(uri.fsPath, additionalParameters);
 
-                                const action = await vscode.window.showInformationMessage(
+                                const action = await kotUi.showInformationMessage(
                                     this.t('Additional Vanessa parameters file created at: {0}', uri.fsPath),
                                     this.t('Open File'),
                                     this.t('Open Folder')
@@ -1483,12 +1620,12 @@ export class YamlParametersManager {
                                 }
                             }
                         } catch (error) {
-                            vscode.window.showErrorMessage(this.t('Error creating JSON file: {0}', String(error)));
+                            kotUi.showErrorMessage(this.t('Error creating JSON file: {0}', String(error)));
                         }
                         break;
                     case 'loadAdditionalFromJson':
                         try {
-                            const uris = await vscode.window.showOpenDialog({
+                            const uris = await kotUi.showOpenDialog({
                                 title: this.t('Load Additional Vanessa Parameters from JSON'),
                                 filters: {
                                     [this.t('JSON Files')]: ['json']
@@ -1502,7 +1639,7 @@ export class YamlParametersManager {
                                 const jsonData = this.parseJsonText(fileContent);
                                 const additionalParameters = this.parseAdditionalParametersFromJsonData(jsonData);
                                 if (!additionalParameters) {
-                                    vscode.window.showErrorMessage(this.t('Invalid JSON format. Expected key-value object.'));
+                                    kotUi.showErrorMessage(this.t('Invalid JSON format. Expected key-value object.'));
                                     return;
                                 }
 
@@ -1511,17 +1648,17 @@ export class YamlParametersManager {
                                     additionalParameters
                                 });
 
-                                vscode.window.showInformationMessage(
+                                kotUi.showInformationMessage(
                                     this.t('Loaded {0} parameters from {1}', additionalParameters.length.toString(), path.basename(filePath))
                                 );
                             }
                         } catch (error) {
-                            vscode.window.showErrorMessage(this.t('Error loading JSON file: {0}', String(error)));
+                            kotUi.showErrorMessage(this.t('Error loading JSON file: {0}', String(error)));
                         }
                         break;
                     case 'createGlobalVarsJsonFile':
                         try {
-                            const uri = await vscode.window.showSaveDialog({
+                            const uri = await kotUi.showSaveDialog({
                                 title: this.t('Save Global Variables File'),
                                 filters: {
                                     [this.t('JSON Files')]: ['json']
@@ -1533,7 +1670,7 @@ export class YamlParametersManager {
                                 const globalVariables = this.normalizeGlobalVanessaVariables(message.globalVanessaVariables);
                                 await this.createGlobalVanessaVariablesFile(uri.fsPath, globalVariables);
 
-                                const action = await vscode.window.showInformationMessage(
+                                const action = await kotUi.showInformationMessage(
                                     this.t('Global variables file created at: {0}', uri.fsPath),
                                     this.t('Open File'),
                                     this.t('Open Folder')
@@ -1547,12 +1684,12 @@ export class YamlParametersManager {
                                 }
                             }
                         } catch (error) {
-                            vscode.window.showErrorMessage(this.t('Error creating JSON file: {0}', String(error)));
+                            kotUi.showErrorMessage(this.t('Error creating JSON file: {0}', String(error)));
                         }
                         break;
                     case 'loadGlobalVarsFromJson':
                         try {
-                            const uris = await vscode.window.showOpenDialog({
+                            const uris = await kotUi.showOpenDialog({
                                 title: this.t('Load Global Variables from JSON'),
                                 filters: {
                                     [this.t('JSON Files')]: ['json']
@@ -1566,7 +1703,7 @@ export class YamlParametersManager {
                                 const jsonData = this.parseJsonText(fileContent);
                                 const globalVariables = this.parseGlobalVarsFromJsonData(jsonData);
                                 if (!globalVariables) {
-                                    vscode.window.showErrorMessage(this.t('Invalid JSON format. Expected key-value object.'));
+                                    kotUi.showErrorMessage(this.t('Invalid JSON format. Expected key-value object.'));
                                     return;
                                 }
 
@@ -1575,12 +1712,12 @@ export class YamlParametersManager {
                                     globalVanessaVariables: globalVariables
                                 });
 
-                                vscode.window.showInformationMessage(
+                                kotUi.showInformationMessage(
                                     this.t('Loaded {0} global variables from {1}', globalVariables.length.toString(), path.basename(filePath))
                                 );
                             }
                         } catch (error) {
-                            vscode.window.showErrorMessage(this.t('Error loading JSON file: {0}', String(error)));
+                            kotUi.showErrorMessage(this.t('Error loading JSON file: {0}', String(error)));
                         }
                         break;
                 }
@@ -1597,13 +1734,13 @@ export class YamlParametersManager {
             const profile = await this.loadActiveProfileSnapshot();
             const snapshot = await loadVanessaParameterCatalogSnapshot(this.getVanessaCatalogFolder(profile.buildParameters), this.getWorkspaceRootPath());
             const catalog = snapshot.definitions;
-            const selected = await vscode.window.showQuickPick([
+            const selected = await kotUi.showQuickPick([
                 { label: `$(add) ${this.t('Custom parameter…')}`, definition: undefined },
                 ...catalog.filter(entry => !same(entry.key) && !entry.aliases.some(same)).map(definition => ({ label: definition.key,
                     description: definition.aliases.join(', '), detail: definition.description, definition }))
             ], { title: this.t('Additional Vanessa Automation parameters'), matchOnDescription: true, matchOnDetail: true, ignoreFocusOut: true });
             if (!selected) { return; }
-            const key = selected.definition?.key ?? await vscode.window.showInputBox({
+            const key = selected.definition?.key ?? await kotUi.showInputBox({
                 title: this.t('Custom parameter…'), prompt: this.t('Parameter name or nested JSON path'), ignoreFocusOut: true,
                 validateInput: value => !value.trim() ? this.t('Name cannot be empty') : same(value.trim()) ? this.t('This parameter is already added.') : undefined
             });
@@ -1612,7 +1749,7 @@ export class YamlParametersManager {
                 key: key.trim(), value: selected.definition?.value ?? '', overrideExisting: false,
                 ...(selected.definition && selected.definition.valueKind !== 'unknown' ? { valueKind: selected.definition.valueKind } : {})
             } }); }
-        } catch (error) { vscode.window.showErrorMessage(this.t('Could not load Vanessa parameters: {0}', String(error))); }
+        } catch (error) { kotUi.showErrorMessage(this.t('Could not load Vanessa parameters: {0}', String(error))); }
     }
 
     private getVanessaCatalogFolder(parameters: readonly YamlParameter[]): string {
@@ -1761,7 +1898,7 @@ export class YamlParametersManager {
         initialValue: string,
         prompt: string
     ): Promise<string | undefined> {
-        return vscode.window.showInputBox({
+        return kotUi.showInputBox({
             title,
             prompt,
             value: initialValue,
@@ -1830,7 +1967,7 @@ export class YamlParametersManager {
                 description: this.t('Copy into this project; keep the original unchanged'), action: 'importLegacy' });
         }
 
-        const selection = await vscode.window.showQuickPick(items, {
+        const selection = await kotUi.showQuickPick(items, {
             title: this.t('Manage profiles'),
             placeHolder: this.t('Select active profile or manage profiles'),
             ignoreFocusOut: true
@@ -1843,7 +1980,7 @@ export class YamlParametersManager {
 
         switch (selection.action) {
             case 'importLegacy': {
-                const legacy = await vscode.window.showQuickPick(legacyProfiles.map(profile => ({ label: profile.name, profileId: profile.id })), {
+                const legacy = await kotUi.showQuickPick(legacyProfiles.map(profile => ({ label: profile.name, profileId: profile.id })), {
                     title: this.t('Import previous shared profile'),
                     placeHolder: this.t('Choose a shared profile to copy into this project'), ignoreFocusOut: true
                 });
@@ -1926,11 +2063,11 @@ export class YamlParametersManager {
             }
             case 'delete': {
                 if (state.profiles.length <= 1) {
-                    void vscode.window.showWarningMessage(this.t('At least one profile must remain.'));
+                    void kotUi.showWarningMessage(this.t('At least one profile must remain.'));
                     await persistSelection();
                     return;
                 }
-                const confirmation = await vscode.window.showWarningMessage(
+                const confirmation = await kotUi.showWarningMessage(
                     this.t('Delete profile "{0}"?', activeProfile.name),
                     { modal: true },
                     this.t('Delete profile')
@@ -1962,7 +2099,8 @@ export class YamlParametersManager {
         additionalVanessaParameters: AdditionalVanessaParameter[],
         globalVanessaVariables: GlobalVanessaVariable[],
         activeProfileId: string,
-        profiles: YamlParametersProfile[]
+        profiles: YamlParametersProfile[],
+        initialTab: 'build' | 'additional' = 'build'
     ): Promise<string> {
         try {
             // URIs для ресурсов
@@ -2012,6 +2150,9 @@ export class YamlParametersManager {
                 sectionsHint: this.t('• SPPR tab: parameters for СборкаТекстовСценариев. Processing uses them to build yaml_parameters.json and Vanessa settings JSON, but not all VAParams keys are supported.\n• Additional tab: Vanessa Automation settings, using the same keys as VAParams.json. Import settings exported from Vanessa here; KOT merges them into the launch JSON.\n• Global variables tab: initial global variable values ($$Name$$), added to GlobalVars in the launch JSON. Current values are in Vanessa variables.\n• VAParams: runtime JSON settings for Vanessa Automation scenario launch.\n• Priority: if the same key exists in SPPR and Additional tabs, SPPR value wins by default. To override it, enable \"Override existing value\" in Additional tab.'),
                 addBuildParameter: this.t('Add build parameter'),
                 addAdditionalParameter: this.t('Add additional parameter'),
+                runningVanessa: this.t('Running Vanessa…'),
+                browse: this.t('Browse…'),
+                runningVanessaHint: this.t('View or edit session settings, apply these additional parameters, or apply a VAParams JSON file.'),
                 addGlobalVariable: this.t('Add global variable'),
                 resetDefaults: this.t('Reset build defaults'),
                 openGeneratedYamlParameters: this.t('Preview SPPR JSON'),
@@ -2121,7 +2262,7 @@ export class YamlParametersManager {
                 fixedBuildParameterKeysJson: this.getFixedBuildParameterKeys(),
                 buildParametersJson: buildParameters, additionalParametersJson: additionalVanessaParameters,
                 globalVanessaVariablesJson: globalVanessaVariables, defaultBuildParametersJson: this.getDefaultParameters(),
-                profilesJson: profiles, activeProfileIdJson: activeProfileId
+                profilesJson: profiles, activeProfileIdJson: activeProfileId, initialTabJson: initialTab
             };
             for (const [key, value] of Object.entries(scriptData)) {
                 htmlContent = htmlContent.replace(`\${${key}}`, () => JSON.stringify(value).replace(/</g, '\\u003c'));

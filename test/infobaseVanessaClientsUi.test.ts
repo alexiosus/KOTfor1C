@@ -65,6 +65,44 @@ test('client rows expose per-profile status/actions without bulk selection witho
     assert.ok(!html.includes('PRIVATE')); assert.match(html, /Connected/u);
 });
 
+test('an active client displays Connected even when its saved settings differ', () => {
+    const script = fs.readFileSync('media/infobaseVanessaClients.js', 'utf8');
+    const context = vm.createContext({}); vm.runInContext(script.slice(script.indexOf('    function escapeHtml('), script.indexOf('    function create(')), context);
+    const html = context.renderClientRows([{ id: 'own', name: 'Client', connected: true, state: 'outdated',
+        clientType: 'Thin', computerName: 'localhost', port: 1538, remotePort: 48000 }], null, (_key: string, fallback: string) => fallback);
+    const doc = parse(html);
+    assert.equal(doc.querySelector('.v-client-state')?.textContent, 'Connected');
+    assert.ok(doc.textContent.includes('Settings differ from saved'));
+    assert.ok(doc.textContent.includes('localhost:48000'));
+    assert.ok(!doc.textContent.includes('localhost:1538'));
+    assert.ok(doc.querySelector('[data-client-action="disconnect"]'));
+    assert.equal(doc.querySelector('[data-client-action="connect"]'), null);
+});
+
+test('a connected client shows its effective port without treating automatic reassignment as unapplied settings', () => {
+    const h = clientPanel();
+    h.panel.render({ rows: [{ id: 'own', name: 'Client', connected: true, state: 'connected',
+        clientType: 'Thin', computerName: 'localhost', port: 1538, remotePort: 48002 }],
+    connection: { ready: true, read: true, connect: true, disconnect: true } }, 'C:\\QA');
+    assert.equal(h.container.querySelector('.v-client-state')?.textContent, 'Connected');
+    assert.ok(h.container.textContent.includes('localhost:48002'));
+    assert.ok(!h.container.textContent.includes('Settings differ from saved'));
+    assert.ok(h.container.querySelector('[data-client-action="disconnect"]'));
+});
+
+test('a disconnected client displays its saved port and offers to apply it instead of appearing to revert to the Vanessa port', () => {
+    const h = clientPanel();
+    h.panel.render({ rows: [{ id: 'own', name: 'Client', connected: false, state: 'outdated',
+        clientType: 'Thin', computerName: 'localhost', port: 1600, remotePort: 48002 }],
+    connection: { ready: true, read: true, write: true, connect: true, disconnect: true } }, 'C:\\QA');
+    assert.ok(h.container.textContent.includes('localhost:1600'));
+    assert.ok(h.container.textContent.includes('Port in Vanessa: 48002'));
+    assert.equal(h.container.querySelector('[data-client-action="connect"]')?.textContent.trim(), 'Apply and connect');
+    h.click('[data-client-action="connect"]');
+    assert.equal(h.messages.at(-1).action, 'connect');
+    assert.deepEqual([...h.messages.at(-1).clientIds], ['own']);
+});
+
 test('client editor opens under the selected row and keeps its draft across row updates', () => {
     const h = clientPanel();
     const own = { id: 'own', name: 'First', username: 'Tester', state: 'connected', clientType: 'Thin', computerName: 'localhost', port: 1538 };

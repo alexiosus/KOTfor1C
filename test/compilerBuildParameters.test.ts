@@ -1,3 +1,4 @@
+import path from 'node:path';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
@@ -32,21 +33,21 @@ test('effective launch target obeys compiler role and alias priority independent
         { key: 'InfobasePath', value: 'Srvr="fallback";Ref="QA";' },
         { key: 'TestClientDBPath', value: 'old-folder' }, { key: 'LaunchDBFolder', value: 'bases/qa' }
     ];
-    assert.equal(getEffectiveLaunchInfobase(parameters, '/project'), 'Srvr="preferred";Ref="QA";');
-    assert.equal(getEffectiveLaunchInfobase(parameters.slice(2), '/project'), 'File="/project/bases/qa";');
+    assert.equal(getEffectiveLaunchInfobase(parameters, path.resolve("/project")), 'Srvr="preferred";Ref="QA";');
+    assert.equal(getEffectiveLaunchInfobase(parameters.slice(2), path.resolve("/project")), "File=\"" + path.resolve("/project/bases/qa") + "\";");
     assert.equal(getEffectiveLaunchInfobase([
         { key: 'LaunchDBFolder', value: 'File="C:\\Bases\\QA";' }
-    ], '/project'), 'File="C:\\Bases\\QA";');
+    ], path.resolve("/project")), 'File="C:\\Bases\\QA";');
 });
 
 test('blank high priority aliases override fallback values consistently with the compiler', () => {
     assert.equal(getEffectiveLaunchInfobase([
         { key: 'InfobasePath', value: 'Srvr="ignored";Ref="QA";' },
         { key: 'TestClientDB', value: '' }, { key: 'LaunchDBFolder', value: 'base' }
-    ], '/project'), 'File="/project/base";');
+    ], path.resolve("/project")), "File=\"" + path.resolve("/project/base") + "\";");
     assert.deepEqual(getEffectiveCompilerLibraries([
         { key: 'VanessaLibraries', value: 'ignored/lib' }, { key: 'Libraries', value: '' }
-    ], '/project'), []);
+    ], path.resolve("/project")), []);
     assert.equal(getEffectiveVanessaFolder([
         { key: 'VanessaFolder', value: 'ignored' }, { key: 'VanessaPath', value: '' }
     ]), '');
@@ -57,11 +58,11 @@ test('one library list policy serves compiler payloads and standalone launch wit
         { key: 'VanessaLibraries', value: 'ignored/library' },
         { key: 'Libraries', value: 'lib/one|C:\\Shared\\Steps|/shared/two' }
     ];
-    assert.deepEqual(getEffectiveCompilerLibraries(parameters, '/project'), [
-        '/project/lib/one', 'C:\\Shared\\Steps', '/shared/two'
+    assert.deepEqual(getEffectiveCompilerLibraries(parameters, path.resolve("/project")), [
+        path.resolve("/project/lib/one"), 'C:\\Shared\\Steps', '/shared/two'
     ]);
-    assert.equal(serializeCompilerBuildParameters(parameters, '/project').Libraries,
-        '/project/lib/one|C:\\Shared\\Steps|/shared/two');
+    assert.equal(serializeCompilerBuildParameters(parameters, path.resolve("/project")).Libraries,
+        [path.resolve('/project/lib/one'), 'C:\\Shared\\Steps', '/shared/two'].join('|'));
 });
 
 test('explicit path keys resolve relative roots and preserve Windows and UNC absolute paths', () => {
@@ -71,9 +72,9 @@ test('explicit path keys resolve relative roots and preserve Windows and UNC abs
         { key: 'ModelDBSettings', value: '\\\\server\\share\\model.yaml' },
         { key: 'CustomFile', value: 'relative/settings.yaml' },
         { key: 'TestClientDB', value: 'File="C:\\Bases\\QA";' }
-    ], '/project');
+    ], path.resolve("/project"));
     assert.deepEqual(payload, {
-        ScenarioFolder: '/project/tests', ProcessFolder: '/processes', FeatureFolder: 'C:\\build\\features',
+        ScenarioFolder: path.resolve("/project/tests"), ProcessFolder: path.resolve("/processes"), FeatureFolder: 'C:\\build\\features',
         ModelDBSettings: '\\\\server\\share\\model.yaml', CustomFile: 'relative/settings.yaml',
         TestClientDB: 'File="C:\\Bases\\QA";'
     });
@@ -102,7 +103,7 @@ test('launch JSON is enabled by default and disabled explicitly in compiler-comp
 
 test('custom keys resembling object prototype properties survive JSON serialization', () => {
     const imported = importCompilerBuildParameters(JSON.parse('{"__proto__":"synthetic/value","constructor":"1.0.1"}'))!;
-    const payload = serializeCompilerBuildParameters(imported, '/project');
+    const payload = serializeCompilerBuildParameters(imported, path.resolve("/project"));
     assert.equal(JSON.parse(JSON.stringify(payload)).__proto__, 'synthetic/value');
     assert.equal(payload.constructor, '1.0.1');
 });
@@ -112,7 +113,7 @@ test('profile normalization preserves arbitrary compiler extension keys and thei
         { key: 'UC', value: 'synthetic\\token/1.0.1' },
         { key: 'CustomKey', value: 'https://example.invalid/path' }
     ]);
-    const payload = serializeCompilerBuildParameters(parameters, '/project');
+    const payload = serializeCompilerBuildParameters(parameters, path.resolve("/project"));
     assert.equal(payload.UC, 'synthetic\\token/1.0.1');
     assert.equal(payload.CustomKey, 'https://example.invalid/path');
 });

@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -27,7 +28,7 @@ function harness() {
         const file = path.join(process.cwd(), 'src', filename);
         vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, 'utf8'), {
             compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-        }).outputText, { module, exports: module.exports, require: (name: string) => dependencies[name], console });
+        }).outputText, { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name]), console });
         return module.exports;
     };
     return { api: load('compilerYamlBlockEditor.ts'), load, document, failures, opened, source, context: { extensionUri: uri },

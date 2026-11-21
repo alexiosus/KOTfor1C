@@ -55,7 +55,7 @@ export function prepareVanessaYamlTrial(source: VanessaFeatureDocument, definiti
     const language = languageTags[0] ?? defaultLanguage;
     if (!['en', 'ru'].includes(language) || languageTags.some(value => value !== language)) { throw new Error('The YAML language must be unambiguously en or ru for a step trial.'); }
     const step = body.lines[line].trim();
-    const prefix = language === 'en' ? /^(?:And|Given|When|Then|But)\s+\S/iu : /^(?:И|Дано|Допустим|Когда|Тогда|Но|К тому же)\s+\S/iu;
+    const prefix = language === 'en' ? /^(?:And|Given|When|Then|But)\s+\S/iu : /^(?:И|Дано|Затем|Пусть|То|А|Также|Иначе|Допустим|Когда|Тогда|Но|К тому же)\s+\S/iu;
     if (!prefix.test(step)) { throw new Error('The selected step does not match the YAML language.'); }
     let end = line + 1;
     while (end < body.lines.length && ['docString', 'table'].includes(scanned[end].kind)) { end++; }

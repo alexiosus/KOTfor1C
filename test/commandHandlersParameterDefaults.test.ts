@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -54,7 +55,7 @@ function harness(source: string, nativeScript?: string) {
         const module = { exports: {} as any };
         vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(process.cwd(), 'src', file), 'utf8'), {
             compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-        }).outputText, { module, exports: module.exports, console, require: (name: string) => dependencies[name] ?? {} });
+        }).outputText, { module, exports: module.exports, console, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name] ?? {}) });
         return module.exports;
     }
     const validator = load('yamlValidator.ts', { vscode: host, yaml: yamlLibrary, './compilerFormatDiagnostics': compilerFormat });

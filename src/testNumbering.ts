@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import path from 'node:path';
 import * as vscode from 'vscode';
 import { TestNumberingStore, validateNewTestCode, type TestNumberingSeries } from './testNumberingStore';
@@ -6,6 +7,8 @@ import { projectLibraryEnvironment } from './projectLibraryIntegration';
 import { resolveProjectLibraryRoot } from './projectLibraryMetadata';
 import { scanWorkspaceForScenarioCatalog } from './workspaceScanner';
 import { getTranslator, type Translator } from './localization';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 export interface NewTestCode {
     code: string;
@@ -40,7 +43,7 @@ async function loadCodes(target: vscode.Uri, root: string): Promise<string[]> {
 }
 
 async function addSeries(store: TestNumberingStore, target: vscode.Uri, t: Translator): Promise<TestNumberingSeries | undefined> {
-    const prefix = await vscode.window.showInputBox({
+    const prefix = await kotUi.showInputBox({
         title: t('Test numbering'), prompt: t('Enter the six-digit tester prefix, including leading zeroes'),
         placeHolder: '000012', ignoreFocusOut: true,
         validateInput: value => /^\d{6}$/u.test(value.trim()) ? undefined : t('A numbering prefix must contain exactly six digits.')
@@ -49,12 +52,12 @@ async function addSeries(store: TestNumberingStore, target: vscode.Uri, t: Trans
     const catalogFile = path.join(path.dirname(store.filePath), 'property-catalogs.yml');
     const properties = new ProjectPropertyCatalogStore(path.dirname(path.dirname(store.filePath)), { beforeWrite: () => assertSaved(catalogFile) });
     const names = (await properties.read()).responsibles;
-    const choice = await vscode.window.showQuickPick([
+    const choice = await kotUi.showQuickPick([
         ...names.map(value => ({ label: value, value, action: undefined })),
         { label: `$(add) ${t('Create responsible…')}`, value: undefined, action: 'create' }
     ], { title: t('Series author'), ignoreFocusOut: true });
     if (!choice) { return undefined; }
-    const author = choice.value ?? await vscode.window.showInputBox({
+    const author = choice.value ?? await kotUi.showInputBox({
         title: t('Series author'), prompt: t('Enter responsible name'), ignoreFocusOut: true,
         validateInput: value => value.trim() && !/[\r\n\0]/u.test(value) ? undefined : t('Name cannot be empty')
     });
@@ -85,7 +88,7 @@ async function chooseSeries(context: vscode.ExtensionContext, target: vscode.Uri
     ];
     const preferredIndex = choices.findIndex(choice => current ? choice.series?.prefix === current.prefix : remembered === 'manual' && choice.action === 'manual');
     if (preferredIndex > 0) { choices.unshift(...choices.splice(preferredIndex, 1)); }
-    const choice = await vscode.window.showQuickPick(choices, {
+    const choice = await kotUi.showQuickPick(choices, {
         title: t('Author and numbering series'), placeHolder: t('Select your tester series or add it to the project'), ignoreFocusOut: true,
     });
     if (!choice) { return undefined; }
@@ -117,7 +120,7 @@ export async function promptForNewTestCode(context: vscode.ExtensionContext, tar
         if (!series) { return undefined; }
         const codes = options.existingCodes ? [...options.existingCodes] : await loadCodes(target, root);
         const initial = series === 'manual' ? options.initialValue : await store.suggest(series.prefix, codes);
-        const code = await vscode.window.showInputBox({
+        const code = await kotUi.showInputBox({
             title: t('Test code'), prompt: t(options.prompt), value: initial, ignoreFocusOut: true,
             validateInput: value => {
                 const invalid = validateNewTestCode(value.trim(), options.numericOnly);
@@ -136,7 +139,7 @@ export async function promptForNewTestCode(context: vscode.ExtensionContext, tar
             catch (error) { throw new Error(error instanceof Error ? t(error.message) : String(error)); }
         } };
     } catch (error) {
-        await vscode.window.showErrorMessage(t('Could not select a test code: {0}', error instanceof Error ? t(error.message) : String(error)));
+        await kotUi.showErrorMessage(t('Could not select a test code: {0}', error instanceof Error ? t(error.message) : String(error)));
         return undefined;
     }
 }
@@ -148,5 +151,5 @@ export async function handleManageTestNumbering(context: vscode.ExtensionContext
         if (!target) { throw new Error(t('No workspace folder is open.')); }
         const root = rootFor(target);
         await chooseSeries(context, target, storeFor(root), root, t, true);
-    } catch (error) { await vscode.window.showErrorMessage(t('Could not configure test numbering: {0}', error instanceof Error ? t(error.message) : String(error))); }
+    } catch (error) { await kotUi.showErrorMessage(t('Could not configure test numbering: {0}', error instanceof Error ? t(error.message) : String(error))); }
 }

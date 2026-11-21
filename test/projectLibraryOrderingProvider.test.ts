@@ -1,3 +1,5 @@
+import { nativeInteraction } from './helpers/kotInteraction';
+import { localFileUri } from './helpers/filePaths';
 import * as projectFormatModule from '../src/projectFormat';
 import * as projectLegacyModule from '../src/projectLegacyMetadata';
 import { v3Fixture } from './helpers/projectFormat';
@@ -45,6 +47,7 @@ async function fixture(t: test.TestContext) {
     }).outputText, {
         module, exports: module.exports, console, Buffer, process, setTimeout, clearTimeout, setInterval, clearInterval,
         require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === 'vscode') { return { EventEmitter: class {},
                 workspace: { openTextDocument: async (uri: any) => ({ uri, version: 1 }) },
                 window: { showWarningMessage: (message: string) => warnings.push(message),
@@ -114,7 +117,10 @@ test('provider routes local group preference and shared item metadata through se
     assert.equal(await groupsText(), before);
     const data = f.provider._groupAndSortTestData(f.infos);
     assert.equal(Object.values<any[]>(data).flat().find(info => info.name === 'a').entityKey, 'uid:a');
-    assert.ok(Object.keys(data).every(key => key.includes(f.root)), 'groups use their project owner and stable identity');
+    assert.ok(Object.keys(data).every(key => {
+        const [owner, id] = JSON.parse(key);
+        return owner === f.root && typeof id === 'string';
+    }), 'groups use their project owner and stable identity');
     const processSource = await fsp.readFile(path.join(f.root, 'process.yaml'), 'utf8');
     await f.provider.reorderProjectLibrary({ type: 'item', section: 'main', projectRoot: f.root, groupId: 'smoke', uri: f.infos[1].yamlFileUri.toString(), beforeId: 'uid:a',
         expectedSource: [{ key: 'uid:a', order: 0 }, { key: 'uid:b', order: 1 }], expectedDestination: [{ key: 'uid:a', order: 0 }, { key: 'uid:b', order: 1 }] });
@@ -132,7 +138,7 @@ test('provider refuses foreign project, stale, malformed and cross-section drag 
     const before = await f.store.read();
     const base = { type: 'item', section: 'main', projectRoot: f.root, groupId: 'smoke', uri: f.infos[1].yamlFileUri.toString(), beforeId: 'uid:a',
         expectedSource: [{ key: 'uid:a', order: 0 }, { key: 'uid:b', order: 1 }], expectedDestination: [{ key: 'uid:a', order: 0 }, { key: 'uid:b', order: 1 }] };
-    for (const patch of [{ projectRoot: '/foreign' }, { uri: 'file:///foreign/a.yaml' }, { uri: f.infos[2].yamlFileUri.toString() }, { beforeId: '../foreign' },
+    for (const patch of [{ projectRoot: '/foreign' }, { uri: localFileUri("/foreign/a.yaml") }, { uri: f.infos[2].yamlFileUri.toString() }, { beforeId: '../foreign' },
         { expectedSource: [] }, { expectedDestination: 'malicious' }, { groupId: 'foreign' }, { section: 'standalone' }]) {
         await f.provider.reorderProjectLibrary({ ...base, ...patch });
         assert.deepEqual(await f.store.read(), before);

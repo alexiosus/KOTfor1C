@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -5,6 +6,7 @@ import os from 'node:os';
 import test from 'node:test';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import { localFileUri } from './helpers/filePaths';
 import { compiledScenarioResourcesFromFeaturePath } from '../src/scenarioFilesModel';
 import * as standaloneFeatureLaunch from '../src/standaloneFeatureLaunch';
 import * as vanessaLaunchJson from '../src/vanessaLaunchJson';
@@ -23,6 +25,7 @@ function loadProvider(): { prototype: object } {
         module: moduleObject,
         exports: moduleObject.exports,
         require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === 'vscode') {
                 return {
                     EventEmitter: class {},
@@ -56,11 +59,11 @@ function providerWithFeatures(): Record<string, any> {
     const provider = Object.create(loadProvider().prototype) as Record<string, any>;
     provider._scenarioBuildArtifacts = new Map();
     provider._standaloneFeatureArtifacts = new Map([
-        ['file:///tests/one/login.feature', {
-            scenarioKey: 'file:///tests/one/login.feature', scenarioName: 'login', featurePath: '/tests/one/login.feature'
+        [localFileUri("/tests/one/login.feature"), {
+            scenarioKey: localFileUri("/tests/one/login.feature"), scenarioName: 'login', featurePath: path.resolve("/tests/one/login.feature")
         }],
-        ['file:///tests/two/login.feature', {
-            scenarioKey: 'file:///tests/two/login.feature', scenarioName: 'login', featurePath: '/tests/two/login.feature'
+        [localFileUri("/tests/two/login.feature"), {
+            scenarioKey: localFileUri("/tests/two/login.feature"), scenarioName: 'login', featurePath: path.resolve("/tests/two/login.feature")
         }]
     ]);
     provider._scenarioExecutionStates = new Map();
@@ -73,15 +76,15 @@ function providerWithFeatures(): Record<string, any> {
 
 test('standalone feature runtime resolves URI identity without main scenarios and distinguishes equal filenames', () => {
     const provider = providerWithFeatures();
-    assert.equal(provider.resolveRuntimeKeyForScenario('login', 'file:///tests/two/login.feature'), 'file:///tests/two/login.feature');
-    assert.equal(provider.getScenarioBuildArtifact('login', 'file:///tests/one/login.feature')?.featurePath, '/tests/one/login.feature');
-    assert.equal(provider.getScenarioBuildArtifact('login', 'file:///tests/two/login.feature')?.featurePath, '/tests/two/login.feature');
+    assert.equal(provider.resolveRuntimeKeyForScenario('login', localFileUri("/tests/two/login.feature")), localFileUri("/tests/two/login.feature"));
+    assert.equal(provider.getScenarioBuildArtifact('login', localFileUri("/tests/one/login.feature"))?.featurePath, path.resolve("/tests/one/login.feature"));
+    assert.equal(provider.getScenarioBuildArtifact('login', localFileUri("/tests/two/login.feature"))?.featurePath, path.resolve("/tests/two/login.feature"));
     assert.equal(provider.getScenarioBuildArtifact('login'), undefined);
 });
 
 test('standalone action callbacks navigate and run the canonical feature independently of main scenario names', async () => {
     const provider = providerWithFeatures();
-    const id = 'file:///tests/two/login.feature';
+    const id = localFileUri("/tests/two/login.feature");
     provider._standaloneFeatureService = { find: (key: string) => key === id ? { id, name: 'login' } : undefined };
     const calls: unknown[][] = [];
     provider.runStandaloneFeature = async (...args: unknown[]) => { calls.push(['run', ...args]); };
@@ -94,7 +97,7 @@ test('standalone action callbacks navigate and run the canonical feature indepen
     await actions.openLog(id);
     await actions.watchLog(id);
     await actions.openRunStep(id);
-    await actions.openRunStep('file:///tests/missing.feature');
+    await actions.openRunStep(localFileUri("/tests/missing.feature"));
     assert.deepEqual(calls, [
         ['run', id], ['log', 'login', id], ['watch', 'login', id], ['step', 'login', id]
     ]);
@@ -110,15 +113,15 @@ test('standalone run status is published even with an empty main scenario catalo
     provider.isScenarioRunInProgress = () => false;
     provider.getScenarioProgress = () => undefined;
     const state = provider.buildRunArtifactsState();
-    assert.equal(state['file:///tests/one/login.feature']?.runStatus, 'passed');
-    assert.equal(state['file:///tests/two/login.feature']?.runStatus, 'failed');
+    assert.equal(state[localFileUri("/tests/one/login.feature")]?.runStatus, 'passed');
+    assert.equal(state[localFileUri("/tests/two/login.feature")]?.runStatus, 'failed');
 });
 
 test('pruning removed main artifacts preserves independent feature execution state', () => {
     const provider = providerWithFeatures();
-    provider._scenarioBuildArtifacts.set('file:///tests/removed/scen.yaml', { scenarioName: 'removed' });
-    provider._scenarioExecutionStates.set('file:///tests/one/login.feature', { scenarioName: 'login', status: 'passed' });
-    provider._scenarioExecutionStates.set('file:///tests/removed/scen.yaml', { scenarioName: 'removed', status: 'passed' });
+    provider._scenarioBuildArtifacts.set(localFileUri("/tests/removed/scen.yaml"), { scenarioName: 'removed' });
+    provider._scenarioExecutionStates.set(localFileUri("/tests/one/login.feature"), { scenarioName: 'login', status: 'passed' });
+    provider._scenarioExecutionStates.set(localFileUri("/tests/removed/scen.yaml"), { scenarioName: 'removed', status: 'passed' });
     provider.stopAllFeatureStepTrackers = () => undefined;
     provider.stopAllTrackedRunLogWatchers = () => undefined;
     provider.disposeAllLiveRunLogWatchers = () => undefined;
@@ -126,14 +129,14 @@ test('pruning removed main artifacts preserves independent feature execution sta
     provider.stopFeatureStepTracker = () => undefined;
     provider.clearTrackedRunLogWatchersForScenario = () => undefined;
     provider.pruneScenarioBuildArtifactsByCache();
-    assert.equal(provider._scenarioExecutionStates.get('file:///tests/one/login.feature')?.status, 'passed');
-    assert.equal(provider._scenarioExecutionStates.has('file:///tests/removed/scen.yaml'), false);
+    assert.equal(provider._scenarioExecutionStates.get(localFileUri("/tests/one/login.feature"))?.status, 'passed');
+    assert.equal(provider._scenarioExecutionStates.has(localFileUri("/tests/removed/scen.yaml")), false);
 });
 
 test('feature catalog refresh preserves launch copies and run state for an unchanged feature', () => {
     const provider = providerWithFeatures();
-    const id = 'file:///tests/one/login.feature';
-    provider._standaloneFeatureArtifacts.get(id).jsonPath = '/tests/one/login.json';
+    const id = localFileUri("/tests/one/login.feature");
+    provider._standaloneFeatureArtifacts.get(id).jsonPath = path.resolve("/tests/one/login.json");
     provider._standaloneFeatureArtifacts.get(id).combinedJsonPath = '/runtime/login_123.json';
     provider._scenarioExecutionStates.set(id, { scenarioName: 'login', status: 'passed' });
     provider.clearFailedFeatureStepHighlight = () => undefined;
@@ -142,11 +145,11 @@ test('feature catalog refresh preserves launch copies and run state for an uncha
     provider.stopLiveRunLogWatcher = () => undefined;
     assert.equal(typeof provider.syncStandaloneFeatureArtifacts, 'function');
     provider.syncStandaloneFeatureArtifacts({
-        features: [{ id, uri: id, name: 'login', title: 'Log in', jsonPath: '/tests/one/login.json' }], groups: [], revision: 1
+        features: [{ id, uri: id, name: 'login', title: 'Log in', jsonPath: path.resolve("/tests/one/login.json") }], groups: [], revision: 1
     });
     assert.equal(provider.getScenarioBuildArtifact('login', id)?.combinedJsonPath, '/runtime/login_123.json');
     assert.equal(provider._scenarioExecutionStates.get(id)?.status, 'passed');
-    assert.equal(provider._standaloneFeatureArtifacts.has('file:///tests/two/login.feature'), false);
+    assert.equal(provider._standaloneFeatureArtifacts.has(localFileUri("/tests/two/login.feature")), false);
 });
 
 test('English Vanessa logs and statuses use distinct runtime copies without editing authored JSON', async () => {
@@ -155,7 +158,7 @@ test('English Vanessa logs and statuses use distinct runtime copies without edit
         const provider = providerWithFeatures();
         provider.resolveVanessaRuntimeDirectory = () => path.join(root, 'runtime');
         const original = '\uFEFF' + JSON.stringify({
-            featurepath: '/tests', FeaturesToRun: ['other.feature'],
+            featurepath: path.resolve("/tests"), FeaturesToRun: ['other.feature'],
             logtotext: true, textlogname: 'original.log', createlogs: true, logpath: 'original.status',
             GlobalVars: { featurepath: 'business value', textlogname: 'business log', logpath: 'business path' },
             Custom: { LogFile: 'custom data' }
@@ -166,13 +169,13 @@ test('English Vanessa logs and statuses use distinct runtime copies without edit
             scenarioKey: id, scenarioName: 'login', sourceUri: { fsPath: fileURLToPath(id) },
             featurePath: fileURLToPath(id), jsonPath: sourceJson
         });
-        const one = await provider.prepareStandaloneFeatureLaunchJson(artifact('file:///tests/one/login.feature'));
-        const two = await provider.prepareStandaloneFeatureLaunchJson(artifact('file:///tests/two/login.feature'));
+        const one = await provider.prepareStandaloneFeatureLaunchJson(artifact(localFileUri("/tests/one/login.feature")));
+        const two = await provider.prepareStandaloneFeatureLaunchJson(artifact(localFileUri("/tests/two/login.feature")));
         const oneJson = JSON.parse(fs.readFileSync(one, 'utf8'));
         const twoJson = JSON.parse(fs.readFileSync(two, 'utf8'));
         assert.equal(fs.readFileSync(sourceJson, 'utf8'), original);
-        assert.equal(oneJson.featurepath, '/tests/one/login.feature');
-        assert.equal(twoJson.featurepath, '/tests/two/login.feature');
+        assert.equal(oneJson.featurepath, path.resolve("/tests/one/login.feature"));
+        assert.equal(twoJson.featurepath, path.resolve("/tests/two/login.feature"));
         assert.notEqual(oneJson.textlogname, twoJson.textlogname);
         assert.notEqual(oneJson.logpath, twoJson.logpath);
         assert.equal(oneJson.GlobalVars.featurepath, 'business value');
@@ -188,9 +191,9 @@ test('selected infobase reaches TestClient when independent launch JSON has no c
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-feature-infobase-'));
     try {
         const provider = providerWithFeatures();
-        const id = 'file:///tests/one/login.feature';
+        const id = localFileUri("/tests/one/login.feature");
         const jsonPath = path.join(root, 'launch.json');
-        const authored = JSON.stringify({ featurepath: '/tests/one/login.feature', Custom: { value: 7 } });
+        const authored = JSON.stringify({ featurepath: path.resolve("/tests/one/login.feature"), Custom: { value: 7 } });
         fs.writeFileSync(jsonPath, authored);
         provider.t = (value: string) => value;
         provider.promptVanessaInfobasePreparationPlan = async () => ({ targetInfobasePath: '/bases/selected' });
@@ -214,17 +217,17 @@ test('compiled exclusions use only associated artifacts and update during the bu
     let excluded: readonly string[] | undefined;
     provider._standaloneFeatureService = { setCompiledFeaturePaths: (paths: readonly string[]) => { excluded = paths; } };
     provider.clearCompiledScenarioExecutionStates = () => undefined;
-    await provider.updateScenarioBuildArtifacts([{ fsPath: '/tests/authored.feature' }], { fsPath: '/tests' });
+    await provider.updateScenarioBuildArtifacts([{ fsPath: path.resolve("/tests/authored.feature") }], { fsPath: path.resolve("/tests") });
     assert.ok(excluded);
     assert.equal(excluded.length, 0);
 });
 
 test('auto-detected feature logs retain standalone URI identity even without a YAML catalog', () => {
     const provider = providerWithFeatures();
-    const id = 'file:///tests/one/login.feature';
+    const id = localFileUri("/tests/one/login.feature");
     provider.parseTrackingSessionFromLogFile = () => ({
-        session: { sessionKey: id, featurePath: '/tests/one/login.feature' },
-        scenarioFromLog: 'Successful authentication', featurePathFromLog: '/tests/one/login.feature'
+        session: { sessionKey: id, featurePath: path.resolve("/tests/one/login.feature") },
+        scenarioFromLog: 'Successful authentication', featurePathFromLog: path.resolve("/tests/one/login.feature")
     });
     const result = provider.resolveScenarioForAutoDetectedVanessaLog('/runtime/login.log');
     assert.equal(result.scenarioKey, id);
@@ -233,13 +236,13 @@ test('auto-detected feature logs retain standalone URI identity even without a Y
 
 test('standalone progress follows scenarios whose titles differ from the feature filename', () => {
     const provider = providerWithFeatures();
-    const id = 'file:///tests/one/login.feature';
+    const id = localFileUri("/tests/one/login.feature");
     const tracker = {
         scenarioKey: id, scenarioName: 'login', currentScenarioNameFromLog: 'Successful authentication',
-        featurePathFromLog: '/tests/one/login.feature', currentFeaturePathFromLog: '/tests/one/login.feature',
+        featurePathFromLog: path.resolve("/tests/one/login.feature"), currentFeaturePathFromLog: path.resolve("/tests/one/login.feature"),
         featureLineVisitCounts: new Map()
     };
-    provider.resolveReadableFeaturePathForTracking = () => '/tests/one/login.feature';
+    provider.resolveReadableFeaturePathForTracking = () => path.resolve("/tests/one/login.feature");
     provider.isRunLogStepCompatibleWithFeature = () => true;
     provider.areFeaturePathsEquivalentForTracking = (left: string, right: string) => left === right;
     provider.isTrackedRunSelectedForScenario = () => false;
@@ -253,8 +256,8 @@ test('MCP log progress covers all compiled scenarios and rejects a different fea
     const provider = providerWithFeatures(); const id = 'compiled-main';
     provider._standaloneFeatureArtifacts.clear(); provider._mcpFeatureRuns = new Set([id]);
     const tracker = { scenarioKey: id, scenarioName: 'Main', currentScenarioNameFromLog: 'Main Parameters=1',
-        featurePathFromLog: '/tests/own.feature', currentFeaturePathFromLog: '/tests/own.feature', featureLineVisitCounts: new Map() };
-    provider.resolveReadableFeaturePathForTracking = () => '/tests/own.feature';
+        featurePathFromLog: path.resolve("/tests/own.feature"), currentFeaturePathFromLog: path.resolve("/tests/own.feature"), featureLineVisitCounts: new Map() };
+    provider.resolveReadableFeaturePathForTracking = () => path.resolve("/tests/own.feature");
     provider.isRunLogStepCompatibleWithFeature = () => true;
     provider.areFeaturePathsEquivalentForTracking = (left: string, right: string) => left === right;
     provider.isTrackedRunSelectedForScenario = () => false;
@@ -263,7 +266,7 @@ test('MCP log progress covers all compiled scenarios and rejects a different fea
     provider.applyFeatureStepSyncLogLine(tracker, 'FeatureLineNumber: 17');
     tracker.currentScenarioNameFromLog = 'Main Parameters=2';
     provider.applyFeatureStepSyncLogLine(tracker, 'FeatureLineNumber: 42');
-    tracker.currentFeaturePathFromLog = '/tests/unrelated.feature';
+    tracker.currentFeaturePathFromLog = path.resolve("/tests/unrelated.feature");
     provider.applyFeatureStepSyncLogLine(tracker, 'FeatureLineNumber: 99');
     assert.deepEqual(lines, [17, 42]);
 });
@@ -283,7 +286,7 @@ test('standalone failure highlights the failed scenario even when a later scenar
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-feature-failure-'));
     try {
         const provider = providerWithFeatures();
-        const id = 'file:///tests/one/login.feature';
+        const id = localFileUri("/tests/one/login.feature");
         const logPath = path.join(root, 'run.log');
         fs.writeFileSync(logPath, [
             'Feature: /tests/one/login.feature', 'Scenario: Declined login',
@@ -292,7 +295,7 @@ test('standalone failure highlights the failed scenario even when a later scenar
             'Scenario: Existing session', '(15). Step: Then session opens', 'PASSED: 1', 'FAILED: 1'
         ].join('\n'));
         provider._liveFeatureStepTrackers = new Map();
-        provider._runningFeatureStepHighlights = new Map([[id, { featurePath: '/tests/one/login.feature', featureLineNumber: 15 }]]);
+        provider._runningFeatureStepHighlights = new Map([[id, { featurePath: path.resolve("/tests/one/login.feature"), featureLineNumber: 15 }]]);
         provider.getFeatureProgressInfo = () => undefined;
         let highlight: any[] | undefined;
         provider.setFailedFeatureStepHighlight = (...args: any[]) => { highlight = args; };
@@ -323,7 +326,7 @@ test('selected infobase preserves business connection strings in independent JSO
         provider.prepareTargetInfobaseForVanessa = async () => undefined;
         provider.saveScenarioCustomInfobasePath = async () => undefined;
         provider.getRunOutputChannel = () => ({});
-        const launch = await provider.prepareVanessaLaunchContext('file:///tests/one/login.feature', 'login', jsonPath, '/startup', root, '/1c');
+        const launch = await provider.prepareVanessaLaunchContext(localFileUri("/tests/one/login.feature"), 'login', jsonPath, '/startup', root, '/1c');
         assert.equal(defaultBase, '/test');
         const runtime = JSON.parse(fs.readFileSync(launch.vaParamsJsonPath, 'utf8'));
         assert.equal(runtime.GlobalVars.ReportingConnection, 'File="/reporting";');
@@ -336,7 +339,7 @@ test('tracked standalone runs retain the failed coordinate when later scenarios 
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-feature-tracked-'));
     try {
         const provider = providerWithFeatures();
-        const id = 'file:///tests/one/login.feature';
+        const id = localFileUri("/tests/one/login.feature");
         const logPath = path.join(root, 'run.log');
         fs.writeFileSync(logPath, [
             'Feature: /tests/one/login.feature', 'Scenario: Declined login',

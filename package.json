@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/alexiosus/KOTfor1C",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "engines": {
     "vscode": "^1.106.0"
   },
@@ -491,6 +491,26 @@
             "default": true,
             "description": "%config.checkRelatedParentScenarios.description%",
             "order": 5
+          },
+          "kotTestToolkit.steps.catalogMode": {
+            "type": "string",
+            "enum": [
+              "online",
+              "offline"
+            ],
+            "enumDescriptions": [
+              "%config.steps.catalogMode.online%",
+              "%config.steps.catalogMode.offline%"
+            ],
+            "default": "online",
+            "scope": "resource",
+            "description": "%config.steps.catalogMode.description%"
+          },
+          "kotTestToolkit.steps.localCatalogPath": {
+            "type": "string",
+            "default": "",
+            "scope": "machine-overridable",
+            "description": "%config.steps.localCatalogPath.description%"
           }
         }
       },
@@ -765,90 +785,6 @@
         }
       },
       {
-        "title": "%config.aiSettings.title%",
-        "properties": {
-          "kotTestToolkit.ai.apiFormat": {
-            "type": "string",
-            "default": "chatCompletions",
-            "enum": [
-              "responses",
-              "chatCompletions"
-            ],
-            "enumDescriptions": [
-              "%config.ai.apiFormat.responses.desc%",
-              "%config.ai.apiFormat.chatCompletions.desc%"
-            ],
-            "description": "%config.ai.apiFormat.description%",
-            "order": 1
-          },
-          "kotTestToolkit.ai.baseUrl": {
-            "type": "string",
-            "default": "http://localhost:1234/v1",
-            "description": "%config.ai.baseUrl.description%",
-            "markdownDescription": "%config.ai.baseUrl.markdownDescription%",
-            "order": 2
-          },
-          "kotTestToolkit.ai.apiVersion": {
-            "type": "string",
-            "default": "",
-            "description": "%config.ai.apiVersion.description%",
-            "markdownDescription": "%config.ai.apiVersion.markdownDescription%",
-            "order": 3
-          },
-          "kotTestToolkit.ai.apiKey": {
-            "type": "string",
-            "default": "local",
-            "description": "%config.ai.apiKey.description%",
-            "markdownDescription": "%config.ai.apiKey.markdownDescription%",
-            "order": 3
-          },
-          "kotTestToolkit.ai.model": {
-            "type": "string",
-            "default": "qwen3:4b",
-            "description": "%config.ai.model.description%",
-            "markdownDescription": "%config.ai.model.markdownDescription%",
-            "order": 4
-          },
-          "kotTestToolkit.ai.outputLanguage": {
-            "type": "string",
-            "default": "ru",
-            "enum": [
-              "ru",
-              "en"
-            ],
-            "enumDescriptions": [
-              "%config.ai.outputLanguage.ru.desc%",
-              "%config.ai.outputLanguage.en.desc%"
-            ],
-            "description": "%config.ai.outputLanguage.description%",
-            "order": 5
-          },
-          "kotTestToolkit.ai.maxLineLength": {
-            "type": "number",
-            "default": 100,
-            "minimum": 40,
-            "maximum": 240,
-            "description": "%config.ai.maxLineLength.description%",
-            "order": 6
-          },
-          "kotTestToolkit.ai.timeoutSeconds": {
-            "type": "number",
-            "default": 180,
-            "minimum": 5,
-            "maximum": 600,
-            "description": "%config.ai.timeoutSeconds.description%",
-            "order": 7
-          },
-          "kotTestToolkit.ai.systemPrompt": {
-            "type": "string",
-            "default": "",
-            "description": "%config.ai.systemPrompt.description%",
-            "markdownDescription": "%config.ai.systemPrompt.markdownDescription%",
-            "order": 8
-          }
-        }
-      },
-      {
         "title": "%config.startupParameters.title%",
         "properties": {
           "kotTestToolkit.startupParams.parameters": {
@@ -874,6 +810,21 @@
             "description": "%config.fileWorkshopExe.description%",
             "order": 2
           },
+          "kotTestToolkit.files.mxlOpeningMode": {
+            "type": "string",
+            "enum": [
+              "fileWorkshop",
+              "platform"
+            ],
+            "default": "fileWorkshop",
+            "enumDescriptions": [
+              "%config.mxlOpeningMode.fileWorkshop%",
+              "%config.mxlOpeningMode.platform%"
+            ],
+            "description": "%config.mxlOpeningMode.description%",
+            "scope": "resource",
+            "order": 2.1
+          },
           "kotTestToolkit.paths.firstLaunchFolder": {
             "type": "string",
             "default": "",
@@ -890,6 +841,66 @@
             "default": false,
             "description": "%config.legacy.enableDisabledTestsDirectoryMoveOnBuild.description%",
             "order": 3
+          }
+        }
+      },
+      {
+        "title": "%config.agent.title%",
+        "order": 115,
+        "properties": {
+          "kotTestToolkit.agent.enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "%config.agent.enabled%",
+            "scope": "window"
+          },
+          "kotTestToolkit.agent.allowExecution": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.agent.allowExecution%",
+            "scope": "window"
+          },
+          "kotTestToolkit.agent.repairPolicy": {
+            "type": "string",
+            "enum": [
+              "read-only",
+              "tests",
+              "all"
+            ],
+            "default": "tests",
+            "description": "%config.agent.repairPolicy%",
+            "scope": "window"
+          },
+          "kotTestToolkit.agent.allowedRoots": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "%config.agent.allowedRoots%",
+            "scope": "window"
+          },
+          "kotTestToolkit.agent.clientProfileId": {
+            "type": "string",
+            "default": "",
+            "description": "%config.agent.clientProfileId%",
+            "scope": "window"
+          },
+          "kotTestToolkit.agent.runTimeoutMinutes": {
+            "type": "number",
+            "minimum": 15,
+            "maximum": 720,
+            "default": 120,
+            "scope": "window",
+            "description": "%config.agent.runTimeoutMinutes%"
+          },
+          "kotTestToolkit.agent.maxRepairAttempts": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "default": 3,
+            "scope": "window",
+            "description": "%config.agent.maxRepairAttempts%"
           }
         }
       }
@@ -1034,8 +1045,8 @@
         "category": "%cmd.category%"
       },
       {
-        "command": "kotTestToolkit.openMxlFile",
-        "title": "%cmd.openMxlFile.title%",
+        "command": "kotTestToolkit.openFile",
+        "title": "%cmd.openFile.title%",
         "category": "%cmd.category%"
       },
       {
@@ -1281,21 +1292,6 @@
         "category": "%cmd.category%"
       },
       {
-        "command": "kotTestToolkit.generateScenarioDescriptionWithAi",
-        "title": "%cmd.generateScenarioDescriptionWithAi.title%",
-        "category": "%cmd.category%"
-      },
-      {
-        "command": "kotTestToolkit.generateConfigurationDiffImpactReportWithAi",
-        "title": "%cmd.generateConfigurationDiffImpactReportWithAi.title%",
-        "icon": "$(sparkle)"
-      },
-      {
-        "command": "kotTestToolkit.reviewChangedTestsWithAi",
-        "title": "%cmd.reviewChangedTestsWithAi.title%",
-        "icon": "$(comment-discussion)"
-      },
-      {
         "command": "kotTestToolkit.trackScenarioRunByFeatureLog",
         "title": "%cmd.trackScenarioRunByFeatureLog.title%",
         "category": "%cmd.category%"
@@ -1385,8 +1381,8 @@
         "title": "%menu.openCurrentScenarioFilesFolder.title%"
       },
       {
-        "command": "kotTestToolkit.editorMenu.openMxlFile",
-        "title": "%menu.openMxlFile.title%"
+        "command": "kotTestToolkit.editorMenu.openFile",
+        "title": "%menu.openFile.title%"
       },
       {
         "command": "kotTestToolkit.editorMenu.revealFileInExplorer",
@@ -1435,10 +1431,6 @@
       {
         "command": "kotTestToolkit.editorMenu.checkAndFillScriptParameters",
         "title": "%menu.checkAndFillScriptParameters.title%"
-      },
-      {
-        "command": "kotTestToolkit.editorMenu.generateScenarioDescriptionWithAi",
-        "title": "%menu.generateScenarioDescriptionWithAi.title%"
       },
       {
         "command": "kotTestToolkit.editorMenu.renameProcessFromEditor",
@@ -1789,6 +1781,67 @@
         "command": "kotTestToolkit.resolveMetadataConflicts",
         "title": "%command.resolveMetadataConflicts.title%",
         "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.generateLocalStepCatalog",
+        "title": "%cmd.generateLocalStepCatalog.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.exportSpprCompiler",
+        "title": "%cmd.exportSpprCompiler.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.settings",
+        "title": "%cmd.vanessaControl.settings.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.elementChecks",
+        "title": "%cmd.vanessaControl.elementChecks.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.agent.setup",
+        "title": "%cmd.agent.setup.title%",
+        "category": "KOT",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "kotTestToolkit.agent.start",
+        "title": "%cmd.agent.start.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.agent.stop",
+        "title": "%cmd.agent.stop.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.agent.run",
+        "title": "%cmd.agent.run.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.agent.importCi",
+        "title": "%cmd.agent.importCi.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.agent.story",
+        "title": "%cmd.agent.story.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.agent.report",
+        "title": "%cmd.agent.report.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.agent.approveRepair",
+        "title": "%cmd.agent.approveRepair.title%",
+        "category": "KOT"
       }
     ],
     "submenus": [
@@ -1986,6 +2039,11 @@
           "command": "kotTestToolkit.openStepLibrary",
           "when": "view == kotTestToolkit.stepLibrarySidebarView",
           "group": "navigation@5"
+        },
+        {
+          "command": "kotTestToolkit.generateLocalStepCatalog",
+          "when": "view == kotTestToolkit.stepLibrarySidebarView",
+          "group": "2_catalogs@1"
         },
         {
           "command": "kotTestToolkit.createInfobase",
@@ -2220,6 +2278,14 @@
           "group": "1_maintenance@4"
         },
         {
+          "command": "kotTestToolkit.generateLocalStepCatalog",
+          "group": "1_maintenance@5"
+        },
+        {
+          "command": "kotTestToolkit.exportSpprCompiler",
+          "group": "1_maintenance@6"
+        },
+        {
           "command": "kotTestToolkit.convertScenarioFormatsBatch",
           "when": "workspaceFolderCount > 0",
           "group": "2_conversion@1"
@@ -2232,20 +2298,20 @@
       ],
       "kotTestToolkit.phaseSwitcher.ai": [
         {
-          "command": "kotTestToolkit.generateConfigurationDiffImpactReportWithAi",
-          "group": "1_ai@1"
+          "command": "kotTestToolkit.agent.setup",
+          "group": "1_agent@1"
+        },
+        {
+          "command": "kotTestToolkit.agent.report",
+          "group": "1_agent@2"
         },
         {
           "command": "kotTestToolkit.openConfigurationDiffReport",
-          "group": "1_ai@2"
-        },
-        {
-          "command": "kotTestToolkit.reviewChangedTestsWithAi",
-          "group": "1_ai@3"
+          "group": "2_saved@1"
         },
         {
           "command": "kotTestToolkit.openTestReviewReport",
-          "group": "1_ai@4"
+          "group": "2_saved@2"
         }
       ],
       "explorer/context": [
@@ -2312,22 +2378,22 @@
       "kotTestToolkit.editorContext.workWithFiles": [
         {
           "command": "kotTestToolkit.editorMenu.openCurrentScenarioFilesFolder",
-          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml)",
+          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml || resourceExtname == .feature)",
           "group": "00_workWithFiles@0"
         },
         {
-          "command": "kotTestToolkit.editorMenu.openMxlFile",
-          "when": "editorTextFocus && editorHasSelection && (resourceExtname == .yaml || resourceExtname == .yml)",
+          "command": "kotTestToolkit.editorMenu.openFile",
+          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml || resourceExtname == .feature)",
           "group": "00_workWithFiles@1"
         },
         {
           "command": "kotTestToolkit.editorMenu.revealFileInExplorer",
-          "when": "editorTextFocus && editorHasSelection && (resourceExtname == .yaml || resourceExtname == .yml)",
+          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml || resourceExtname == .feature)",
           "group": "00_workWithFiles@2"
         },
         {
           "command": "kotTestToolkit.editorMenu.revealFileInOS",
-          "when": "editorTextFocus && editorHasSelection && (resourceExtname == .yaml || resourceExtname == .yml)",
+          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml || resourceExtname == .feature)",
           "group": "00_workWithFiles@3"
         }
       ],
@@ -2383,11 +2449,6 @@
           "command": "kotTestToolkit.editorMenu.checkAndFillScriptParameters",
           "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml)",
           "group": "01_fill@1"
-        },
-        {
-          "command": "kotTestToolkit.editorMenu.generateScenarioDescriptionWithAi",
-          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml)",
-          "group": "01_fill@2"
         },
         {
           "command": "kotTestToolkit.editorMenu.renameProcessFromEditor",
@@ -2524,14 +2585,6 @@
           "when": "true"
         },
         {
-          "command": "kotTestToolkit.generateScenarioDescriptionWithAi",
-          "when": "true"
-        },
-        {
-          "command": "kotTestToolkit.generateConfigurationDiffImpactReportWithAi",
-          "when": "true"
-        },
-        {
           "command": "kotTestToolkit.openNestedScenarioFromFeature",
           "when": "true"
         },
@@ -2560,7 +2613,7 @@
           "when": "false"
         },
         {
-          "command": "kotTestToolkit.editorMenu.openMxlFile",
+          "command": "kotTestToolkit.editorMenu.openFile",
           "when": "false"
         },
         {
@@ -2609,10 +2662,6 @@
         },
         {
           "command": "kotTestToolkit.editorMenu.checkAndFillScriptParameters",
-          "when": "false"
-        },
-        {
-          "command": "kotTestToolkit.editorMenu.generateScenarioDescriptionWithAi",
           "when": "false"
         },
         {
@@ -2752,7 +2801,7 @@
         },
         {
           "command": "kotTestToolkit.editorMenu.findCurrentFileReferences",
-          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml)",
+          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml || resourceExtname == .feature)",
           "group": "00_navigation@1"
         },
         {
@@ -2767,7 +2816,7 @@
         },
         {
           "submenu": "kotTestToolkit.editorContext.workWithFiles",
-          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml)",
+          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml || resourceExtname == .feature)",
           "group": "03_files@0"
         },
         {
@@ -3133,13 +3182,13 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run check && npm run copy-codicons && npm run esbuild-base -- --minify",
-    "compile": "npm run copy-codicons && npm run esbuild-base -- --sourcemap",
+    "vscode:prepublish": "npm run check && npm run copy-codicons && npm run esbuild-base -- --minify && npm run build:agent-bridge -- --minify",
+    "compile": "npm run copy-codicons && npm run esbuild-base -- --sourcemap && npm run build:agent-bridge",
     "watch": "npm run copy-codicons && npm run esbuild-base -- --sourcemap --watch",
     "copy-codicons": "cpy node_modules/@vscode/codicons/dist/codicon.css node_modules/@vscode/codicons/dist/codicon.ttf media --flat",
     "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
     "compile-tests": "node tools/cleanTestOutput.cjs && esbuild test/*.test.ts --bundle --outdir=out/test --platform=node --format=cjs --sourcemap",
-    "test": "npm run compile-tests && node --test out/test/*.test.js",
+    "test": "npm run compile-tests && node tools/runTests.cjs",
     "check:types": "tsc --noEmit && tsc -p tsconfig.tools.json --noEmit",
     "lint": "eslint src test tools/step-catalog --max-warnings 0",
     "check": "npm run check:types && npm run lint && npm run l10n:check && npm test",
@@ -3150,7 +3199,8 @@
     "build:step-catalog-tool": "esbuild ./tools/step-catalog/cli.ts --bundle --outfile=out/tools/step-catalog.js --platform=node --format=cjs",
     "generate:step-catalog": "npm run build:step-catalog-tool && node out/tools/step-catalog.js",
     "docs:reference": "node tools/generateDocumentationReference.cjs",
-    "docs:check": "node tools/checkDocumentation.cjs"
+    "docs:check": "node tools/checkDocumentation.cjs",
+    "build:agent-bridge": "esbuild ./src/agentMcpBridgeCli.ts --bundle --outfile=out/agent-mcp.cjs --format=cjs --platform=node"
   },
   "devDependencies": {
     "@types/node": "20.x",
@@ -3171,6 +3221,7 @@
     "@modelcontextprotocol/client": "2.3.1",
     "jszip": "^3.10.1",
     "node-html-parser": "^7.0.1",
+    "smol-toml": "1.9.1",
     "uuid": "^11.1.1",
     "yaml": "^2.9.1"
   }

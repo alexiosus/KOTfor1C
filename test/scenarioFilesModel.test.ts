@@ -1,3 +1,5 @@
+import path from 'node:path';
+import { localFileUri } from './helpers/filePaths';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
@@ -23,7 +25,7 @@ function item(overrides: Partial<StepLibraryItem> = {}): StepLibraryItem {
         navigable: true,
         insertable: true,
         capturedLocation: {
-            uri: 'file:///workspace/CreateInvoice/scen.yaml',
+            uri: localFileUri("/workspace/CreateInvoice/scen.yaml"),
             range: {
                 start: { line: 0, character: 0 },
                 end: { line: 0, character: 1 }
@@ -79,8 +81,8 @@ test('exposes an explicit compiled attachments root for a main scenario', () => 
         sourceGroup: 'main',
         capturedLocation: undefined,
         ...({
-            compiledFeatureUri: 'file:///workspace/build/004_Production.feature',
-            scenarioFilesRootUri: 'file:///workspace/build/004_Production/%D0%A4%D0%B0%D0%B9%D0%BB%D1%8B'
+            compiledFeatureUri: localFileUri("/workspace/build/004_Production.feature"),
+            scenarioFilesRootUri: localFileUri("/workspace/build/004_Production/Файлы")
         } as object)
     } as Partial<StepLibraryItem>);
 
@@ -94,11 +96,11 @@ test('derives the compiled feature and localized attachments URIs from one artif
             filesRootUri: string;
         } | null;
     }).compiledScenarioResourcesFromFeaturePath;
-    const resources = derive?.('/workspace/build/004_Production.feature');
+    const resources = derive?.(path.resolve("/workspace/build/004_Production.feature"));
 
-    assert.equal(resources?.featureUri, 'file:///workspace/build/004_Production.feature');
+    assert.equal(resources?.featureUri, localFileUri("/workspace/build/004_Production.feature"));
     assert.equal(
         decodeURIComponent(resources?.filesRootUri ?? ''),
-        'file:///workspace/build/004_Production/Файлы'
+        decodeURIComponent(localFileUri("/workspace/build/004_Production/Файлы"))
     );
 });

@@ -4,7 +4,7 @@ import test from 'node:test';
 import { addProjectLibraryFolder, resolveProjectLibraryConfiguration } from '../src/projectLibraryRoots';
 
 test('registers an export folder in compiler Libraries without changing other profile settings', () => {
-    const input = { workspaceFolderPath: '/repo', profileId: 'active',
+    const input = { pathApi: path.posix, workspaceFolderPath: '/repo', profileId: 'active',
         buildParameters: [{ key: 'Libraries', value: '' }, { key: 'ScenarioFolder', value: 'tests' }], additionalVanessaParameters: [] };
     const updated = addProjectLibraryFolder(input, '/repo/tests/nested');
     assert.equal(updated.buildParameters[0].value, 'tests/nested');
@@ -33,7 +33,7 @@ test('library registration preserves aliases and effective Additional priority o
 
 test('empty priority library override gains the export folder; inactive overrides stay unchanged', () => {
     for (const overrideExisting of [false, true]) {
-        const input = { workspaceFolderPath: '/repo', profileId: 'active', buildParameters: [],
+        const input = { pathApi: path.posix, workspaceFolderPath: '/repo', profileId: 'active', buildParameters: [],
             additionalVanessaParameters: [{ key: 'librarycatalogs', value: '[]', overrideExisting }] };
         const updated = addProjectLibraryFolder(input, '/repo/exports');
         assert.deepEqual(resolveProjectLibraryConfiguration({ ...input, ...updated }).libraryRootPaths, ['/repo/exports']);
@@ -73,7 +73,7 @@ test('resolves compiler pipe-separated Libraries on both platforms without split
 });
 
 test('an explicitly empty Libraries suppresses VanessaLibraries like the compiler does', () => {
-    const result = resolveProjectLibraryConfiguration({ workspaceFolderPath: '/repo', profileId: 'active',
+    const result = resolveProjectLibraryConfiguration({ pathApi: path.posix, workspaceFolderPath: '/repo', profileId: 'active',
         buildParameters: [{ key: 'VanessaLibraries', value: 'old' }, { key: 'Libraries', value: '' }],
         additionalVanessaParameters: [] });
     assert.deepEqual(result.libraryRootPaths, []);
@@ -86,13 +86,13 @@ test('a colon in a single POSIX library folder remains part of its name', () => 
 });
 
 test('Additional cannot replace the automatic compiler library catalog without priority even if Libraries was removed', () => {
-    const result = resolveProjectLibraryConfiguration({ workspaceFolderPath: '/repo', profileId: 'active', buildParameters: [],
+    const result = resolveProjectLibraryConfiguration({ pathApi: path.posix, workspaceFolderPath: '/repo', profileId: 'active', buildParameters: [],
         additionalVanessaParameters: [{ key: 'librarycatalogs', value: '["ignored"]', overrideExisting: false }] });
     assert.deepEqual(result.libraryRootPaths, []);
 });
 
 test('Additional library catalogs respect priority against the SPPR library list, including an empty override', () => {
-    const input = { workspaceFolderPath: '/repo', profileId: 'active',
+    const input = { pathApi: path.posix, workspaceFolderPath: '/repo', profileId: 'active',
         buildParameters: [{ key: 'Libraries', value: 'steps|exports' }] };
     const withoutPriority = resolveProjectLibraryConfiguration({ ...input,
         additionalVanessaParameters: [{ key: 'librarycatalogs', value: '["ignored"]', overrideExisting: false }] });

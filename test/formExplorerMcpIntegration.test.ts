@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
@@ -10,10 +11,33 @@ function load(file: string, dependencies: Record<string, unknown>) {
     const ts = require('typescript') as typeof import('typescript');
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS,
         target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText,
-    { module, exports: module.exports, console, setTimeout, clearTimeout, setInterval, clearInterval, require: (name: string) => dependencies[name] ?? (name === './vanessaControlFormSteps' ? formStepsApi : require(name)) });
+    { module, exports: module.exports, console, setTimeout, clearTimeout, setInterval, clearInterval, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name] ?? (name === './vanessaControlFormSteps' ? formStepsApi : require(name))) });
     return module.exports;
 }
 const form = { schemaVersion: 1, generatedAt: 'now', source: { adapter: 'MCP' }, form: { title: 'Own' }, elements: [], tables: [], attributes: [], commands: [], notes: [] } as FormExplorerSnapshot;
+
+test('form generation and builder reuse validate configured directories before starting work', async () => {
+    const ts = require('typescript') as typeof import('typescript');
+    const paths = { configurationSourceDirectory: 'source', generatedArtifactsDirectory: 'output', builderInfobaseDirectory: 'builder' };
+    const checked: unknown[][] = [];
+    const globals = { getTranslator: async () => (text: string) => text, getFormExplorerConfigurationSourceDirectory: () => 'source',
+        getFormExplorerGeneratedArtifactsDirectory: () => 'output', getFormExplorerSnapshotPath: () => 'snapshot',
+        getFormExplorerBuilderPaths: () => paths, normalizeOneCClientExePath: () => '',
+        vscode: { workspace: { getConfiguration: () => ({ get: () => '' }) } },
+        assertKotPath: async (...args: unknown[]) => { checked.push(args); if (args[0] === 'output') { throw new Error('outside allowed roots'); } } };
+    const entry = (file: string, name: string) => {
+        const source = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+        const node = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name)!;
+        const code = node.getText(source).replace(/^export /u, '') + '\nexports.run = ' + name + ';';
+        const exports = {} as any;
+        vm.runInNewContext(ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, { ...globals, exports });
+        return exports.run;
+    };
+    await assert.rejects(entry('src/formExplorerExtensionGenerator.ts', 'handleGenerateFormExplorerExtensionCore')({}, 'build'), /outside allowed roots/);
+    assert.equal(JSON.stringify(checked), JSON.stringify([['output', true]])); checked.length = 0;
+    await assert.rejects(entry('src/formExplorerBuilder.ts', 'ensureFormExplorerBuilderInfobaseReady')({}, 'platform'), /outside allowed roots/);
+    assert.equal(JSON.stringify(checked), JSON.stringify([['source'], ['output', true]]));
+});
 
 test('editor loads its first form through the completion source while Form Explorer has never opened', async () => {
     let requests = 0;
@@ -24,6 +48,22 @@ test('editor loads its first form through the completion source while Form Explo
         completionSnapshot: async () => { requests++; return form; } });
     assert.equal((await live.loadLiveFormExplorerSnapshot())?.snapshot, form); assert.equal(requests, 1);
     registration.dispose();
+});
+
+test('lazy editor values stay with their source and never read a disk snapshot when MCP details become unavailable', async () => {
+    let reads = 0; let finish!: (value: FormExplorerSnapshot) => void;
+    const live = load('src/formExplorerLiveSnapshot.ts', {
+        vscode: { workspace: { getConfiguration: () => ({ get: () => 'auto' }) } }, './formExplorerPaths': {},
+        './formExplorerEnrichment': {}, './formExplorerTypes': {} });
+    const registration = live.registerFormExplorerMcpSource({ available: true, cached: () => form,
+        completionElement: async () => { reads++; return new Promise(resolve => { finish = resolve; }); } });
+    const reading = live.loadLiveFormExplorerElement(form, 'Form.Name', () => true);
+    const replacement = live.registerFormExplorerMcpSource({ available: true, cached: () => ({ ...form, notes: ['Another client'] }) });
+    finish(form); assert.equal(await reading, undefined); assert.equal(reads, 1);
+    assert.equal(await live.loadLiveFormExplorerElement(form, 'Form.Name', () => false), undefined);
+    registration.dispose(); replacement.dispose();
+    const file = { ...form, source: { adapter: 'snapshot' } };
+    assert.equal(await live.loadLiveFormExplorerElement(file, 'Form.Name', () => true), file);
 });
 
 test('editor uses the shared live MCP cache and never falls back to another client snapshot on an MCP error', async () => {

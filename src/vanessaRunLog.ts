@@ -99,7 +99,7 @@ export function extractFeaturePathFromRunLogLine(line: string): string | undefin
 }
 
 function extractRunLogStep(line: string): VanessaRunLogStep | undefined {
-    const stepKeyword = '(?:Given|When|Then|And|But|Но|Тогда|Когда|Если|И|К\\s+тому\\s+же|Допустим|Дано|Пусть)';
+    const stepKeyword = '(?:Given|When|Then|And|But|Но|Тогда|Когда|Если|И|К\\s+тому\\s+же|Затем|Пусть|То|А|Также|Иначе|Допустим|Дано)';
     const patterns = [
         new RegExp(`\\((\\d+)\\)\\s*\\.?\\s*(?:Шаг|Step)\\s*:\\s*(.*?)\\s*$`, 'i'),
         /^\s*(?:НомерСтрокиФичи|FeatureLineNumber)\s*:\s*(\d+)\s*$/i,
@@ -136,7 +136,7 @@ function normalizeStepText(value: string): string {
 }
 
 function extractFeatureStepText(line: string): string | undefined {
-    const match = line.match(/^\s*((?:Given|When|Then|And|But|Но|Тогда|Когда|Если|И|К\s+тому\s+же|Допустим|Дано|Пусть)\b.*?)\s*$/i);
+    const match = line.match(/^\s*((?:Given|When|Then|And|But|Но|Тогда|Когда|Если|И|К\s+тому\s+же|Затем|Пусть|То|А|Также|Иначе|Допустим|Дано)\b.*?)\s*$/i);
     return match?.[1]?.trim() || undefined;
 }
 

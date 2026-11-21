@@ -3,15 +3,27 @@ import { parseVanessaControlReply } from './vanessaControlProtocol';
 export class VanessaAuthoringError extends Error {
     constructor(message: string, readonly uncertain = false, readonly token?: VanessaRecordingToken) { super(message); }
 }
-export interface VanessaRecordingToken { readonly generation: number; readonly client: string; readonly previousSteps?: string }
+export interface VanessaRecordingToken { readonly generation: number; readonly client: string; readonly previousSteps?: string; readonly previousCaptureId?: number }
 export interface VanessaAuthoringPorts {
+    readonly supportsRecordingResult?: boolean;
     readonly generation: number;
     isCurrent(): boolean;
     client(): Promise<string>;
     formIdentity(): Promise<string>;
-    request(tool: 'get_vanessa_automation_state' | 'user_actions_recording' | 'get_form_analysis', args: Record<string, unknown>): Promise<unknown>;
+    request(tool: 'get_vanessa_automation_state' | 'user_actions_recording' | 'get_form_analysis' | 'get_form_element_steps', args: Record<string, unknown>): Promise<unknown>;
 }
 const fail = () => new VanessaAuthoringError('Vanessa authoring was not confirmed. Check the current client and recording state in Vanessa.');
+export function parseVanessaRecordingStatus(text: string): { recording: boolean; complete: boolean; captureId?: number } {
+    if (!text.startsWith('# Результат записи действий пользователя\n')) { throw fail(); }
+    const flag = (name: string) => {
+        const matches = [...text.split('\n## ')[0].matchAll(new RegExp('^- ' + name + ': (да|нет|истина|ложь|true|false)$', 'gimu'))];
+        if (matches.length !== 1) { throw fail(); } return /^(?:да|истина|true)$/iu.test(matches[0][1]);
+    };
+    const ids = [...text.matchAll(/^- Идентификатор захвата: (\d+)$/gmu)];
+    const captureId = ids.length === 1 ? Number(ids[0][1]) : undefined;
+    if (ids.length > 1 || captureId !== undefined && !Number.isSafeInteger(captureId)) { throw fail(); }
+    return { recording: flag('Запись идёт'), complete: flag('Есть завершённый результат'), captureId };
+}
 function section(text: string, heading: string): string {
     const start = text.indexOf(heading + '\n');
     if (start < 0) { throw fail(); }
@@ -28,6 +40,7 @@ export class VanessaRuntimeAuthoring {
         this.current(); try { return vanessaFormReplyText(reply); } catch { throw fail(); }
     }
     private async recording(): Promise<boolean | undefined> {
+        if (this.ports.supportsRecordingResult) { return parseVanessaRecordingStatus(await this.request('user_actions_recording', { action: 'status' })).recording; }
         const text = await this.request('get_vanessa_automation_state', {});
         const matches = [...text.matchAll(/^- Включена запись действий пользователя: (Да|Нет|Истина|Ложь|true|false)$/gimu)];
         if (matches.length === 1) { return /^(?:да|истина|true)$/iu.test(matches[0][1]); }
@@ -49,6 +62,7 @@ export class VanessaRuntimeAuthoring {
         this.current(); const client = await this.ports.client(); this.current();
         const recording = await this.recording();
         if (recording === true) { throw new VanessaAuthoringError('Vanessa is already recording. Stop that capture in Vanessa before starting another.'); }
+        const previousCaptureId = this.ports.supportsRecordingResult ? parseVanessaRecordingStatus(await this.request('user_actions_recording', { action: 'status' })).captureId : undefined;
         let previousSteps: string | undefined;
         try {
         // .45 omits the flag before the first execution and Start is a toggle. The user
@@ -60,13 +74,24 @@ export class VanessaRuntimeAuthoring {
         const text = await this.request('user_actions_recording', { action: 'start' });
         if (!text.startsWith('# Запись действий начата\n') || !/^- Статус: запись включена$/mu.test(text) || await this.recording() === false) { throw fail(); }
         if (client !== await this.ports.client()) { throw fail(); } this.current();
-        return Object.freeze({ generation: this.ports.generation, client, ...(previousSteps ? { previousSteps } : {}) });
+        return Object.freeze({ generation: this.ports.generation, client, ...(previousSteps ? { previousSteps } : {}), ...(previousCaptureId !== undefined ? { previousCaptureId } : {}) });
         } catch { throw new VanessaAuthoringError('Recording state was not confirmed. Check Vanessa or retry Stop recording.', true,
-            { generation: this.ports.generation, client, ...(previousSteps ? { previousSteps } : {}) }); }
+            { generation: this.ports.generation, client, ...(previousSteps ? { previousSteps } : {}), ...(previousCaptureId !== undefined ? { previousCaptureId } : {}) }); }
     }
     async stop(token: VanessaRecordingToken): Promise<string | null> {
         this.current(); if (token.generation !== this.ports.generation || token.client !== await this.ports.client()) { throw fail(); }
         this.current();
+        if (this.ports.supportsRecordingResult) {
+            const status = parseVanessaRecordingStatus(await this.request('user_actions_recording', { action: 'status' }));
+            const completed = status.complete && status.captureId !== undefined && status.captureId !== token.previousCaptureId;
+            const stopping = status.recording && !completed;
+            const text = await this.request('user_actions_recording', stopping ? { action: 'stop' } : { action: 'get_result', ...(status.captureId !== undefined ? { capture_id: status.captureId } : {}) });
+            const result = parseVanessaRecordingStatus(text);
+            if (stopping && result.recording || !result.complete || result.captureId === undefined || result.captureId === token.previousCaptureId ||
+                !stopping && result.captureId !== status.captureId || token.client !== await this.ports.client()) { throw fail(); }
+            this.current();
+            return text.includes('Действий не обнаружено: запись завершена, текст пуст.') ? '' : section(text, '## Записанные шаги (Turbo Gherkin)');
+        }
         // .45 finalizes the capture again on every Stop, replacing the saved
         // generated text with an empty recording. Leave an external Stop intact.
         if (await this.recording() === false) { return null; }
@@ -76,6 +101,12 @@ export class VanessaRuntimeAuthoring {
         if (token.client !== await this.ports.client()) { throw fail(); } this.current();
         return text;
         } catch { throw new VanessaAuthoringError('Recording state was not confirmed. Check Vanessa or retry Stop recording.', true, { ...token, ...(previousSteps ? { previousSteps } : {}) }); }
+    }
+    async elementSteps(mode: 'checks' | 'suggestions', elementName?: string, tableName?: string): Promise<string> {
+        this.current(); const before = await this.ports.formIdentity(); this.current();
+        const text = await this.request('get_form_element_steps', { mode, ...(elementName ? { element_name: elementName } : {}), ...(tableName ? { table_name: tableName } : {}) });
+        if (before !== await this.ports.formIdentity()) { throw fail(); } this.current();
+        return section(text, '## Шаги');
     }
     async formSteps(kind: 'checks' | 'suggestions'): Promise<string> {
         this.current(); const before = await this.ports.formIdentity(); this.current();

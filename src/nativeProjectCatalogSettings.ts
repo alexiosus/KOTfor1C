@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import { isProjectSetupPending, onProjectSetupCompleted } from './projectSetupGate';
 import path from 'node:path';
 import * as vscode from 'vscode';
@@ -8,6 +9,8 @@ import { ProjectPropertyCatalogStore, validatePropertyCatalogName, type ProjectP
 import { TestNumberingStore, type TestNumberingDefinition } from './testNumberingStore';
 import type { ScenarioCatalogProvider } from './scenarioCatalog';
 import { discoverProjectCatalogs } from './projectCatalogDiscovery';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 interface NativeProjection { value: unknown; workspace?: unknown }
 interface FolderSettings {
@@ -93,7 +96,7 @@ export async function registerNativeProjectCatalogSettings(context: vscode.Exten
     const enqueue = (operation: () => Promise<void>) => {
         const result = settingsQueue.then(operation);
         settingsQueue = result.catch(error => {
-            if (!disposed) { void vscode.window.showErrorMessage(t('Could not update project catalog settings: {0}', String(error))); }
+            if (!disposed) { void kotUi.showErrorMessage(t('Could not update project catalog settings: {0}', String(error))); }
         });
         return result;
     };
@@ -101,7 +104,7 @@ export async function registerNativeProjectCatalogSettings(context: vscode.Exten
     const report = (entry: { folder: vscode.WorkspaceFolder; active: boolean; lastError: string }, errors: string[]) => {
         if (!entry.active || disposed) { return; }
         const message = errors.join('\n');
-        if (message && message !== entry.lastError) { void vscode.window.showErrorMessage(t('Project catalogs ({0}): {1}', entry.folder.name, message)); }
+        if (message && message !== entry.lastError) { void kotUi.showErrorMessage(t('Project catalogs ({0}): {1}', entry.folder.name, message)); }
         entry.lastError = message;
     };
     const disposeEntry = (entry: FolderSettings) => {
@@ -125,7 +128,7 @@ export async function registerNativeProjectCatalogSettings(context: vscode.Exten
             const folder = await vscode.window.showWorkspaceFolderPick({ placeHolder: t('Select the project for these catalog values') });
             entry = folder && entries.get(folder.uri.toString());
         }
-        if (!entries.size) { void vscode.window.showInformationMessage(t('Open a project and edit its Workspace or Folder settings to save these catalog values.')); }
+        if (!entries.size) { void kotUi.showInformationMessage(t('Open a project and edit its Workspace or Folder settings to save these catalog values.')); }
         return entry;
     };
     const importUserCatalogs = async (values: Map<string, unknown>, entry: FolderSettings) => {
@@ -162,7 +165,7 @@ export async function registerNativeProjectCatalogSettings(context: vscode.Exten
     const offerProjectSettings = (keys: readonly string[]) => {
         if (disposed || !keys.length) { return; }
         const transfer = t('Move values to project'); const open = t('Open project settings');
-        void vscode.window.showInformationMessage(t('These catalogs are shared with the project. Edit them in Workspace or Folder settings. Values entered in User have been kept there.'), transfer, open)
+        void kotUi.showInformationMessage(t('These catalogs are shared with the project. Edit them in Workspace or Folder settings. Values entered in User have been kept there.'), transfer, open)
             .then(action => {
                 if (action !== transfer && action !== open || disposed) { return; }
                 return enqueue(async () => {

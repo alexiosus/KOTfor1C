@@ -37,6 +37,37 @@ test('disabled editor form reads retain existing panel hints and never issue a r
     source.dispose(); assert.equal(await source.completionSnapshot(), undefined); assert.equal(reads, 1);
 });
 
+test('selected completion values coalesce, expire after five seconds and reject another form or canceled selection', async context => {
+    context.mock.timers.enable({ apis: ['Date'], now: 10_000 });
+    const own = setup(); const initial = (await own.source.refresh())!; let values = 0;
+    own.ports.run = async work => work({ element: async (previous: typeof initial, path: string) => {
+        values++; assert.equal(path, 'Form.Name'); await Promise.resolve();
+        return { ...previous, elements: [{ path, name: 'Name', valuePreview: 'Current value', children: [] }] };
+    } } as unknown as VanessaRuntimeForms);
+    const replies = await Promise.all(Array.from({ length: 30 }, () => own.source.completionElement(initial, 'Form.Name', () => true)));
+    assert.equal(values, 1); assert.ok(replies.every(reply => reply?.elements[0].valuePreview === 'Current value'));
+    context.mock.timers.tick(6_000);
+    await own.source.completionElement(initial, 'Form.Name', () => true); assert.equal(values, 2);
+    await own.source.completionElement(initial, 'Form.Name', () => false); assert.equal(values, 2);
+    await own.source.completionElement({ ...initial, source: { ...initial.source, sessionId: 'another form' } }, 'Form.Name', () => true);
+    assert.equal(values, 2);
+    own.source.dispose();
+});
+
+test('late selected-field replies are discarded when the client changes or selection is canceled', async () => {
+    for (const changedClient of [false, true]) {
+        const own = setup(); const initial = (await own.source.refresh())!;
+        let current = true; let finish!: () => void;
+        own.ports.run = async work => work({ element: async () => {
+            await new Promise<void>(resolve => { finish = resolve; }); return { ...initial, notes: ['Stale field value'] };
+        } } as unknown as VanessaRuntimeForms);
+        const reading = own.source.completionElement(initial, 'Form.Name', () => current);
+        if (changedClient) { own.state({ generation: 2, ready: true, supported: true }); } else { current = false; }
+        finish(); assert.equal(await reading, undefined);
+        assert.notDeepEqual(own.source.cached()?.notes, ['Stale field value']); own.source.dispose();
+    }
+});
+
 test('completion failures back off while typing and can recover after a client connects in the same manager session', async context => {
     context.mock.timers.enable({ apis: ['Date'], now: 10_000 });
     const own = setup(); let attempts = 0; let connected = false;

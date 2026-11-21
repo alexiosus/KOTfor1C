@@ -10,6 +10,7 @@
     <link href="${stylesUri}" rel="stylesheet">
 </head>
 <body
+    data-browse="${loc.browse}"
     data-param-name-placeholder="${loc.parameterNamePlaceholder}"
     data-param-value-placeholder="${loc.parameterValuePlaceholder}"
     data-remove-parameter="${loc.removeParameter}"
@@ -252,6 +253,9 @@
                         <button id="addAdditionalRowBtn" class="button-with-icon ghost-btn">
                             <span class="codicon codicon-add"></span> ${loc.addAdditionalParameter}
                         </button>
+                        <button id="vanessaSessionSettingsBtn" class="button-with-icon ghost-btn" type="button" title="${loc.runningVanessaHint}">
+                            <span class="codicon codicon-plug"></span> ${loc.runningVanessa}
+                        </button>
                         <div class="search-box search-frame">
                             <span class="codicon codicon-search search-icon" aria-hidden="true"></span>
                             <input
@@ -357,6 +361,7 @@
         window.__globalVanessaVariables = ${globalVanessaVariablesJson};
         window.__profiles = ${profilesJson};
         window.__activeProfileId = ${activeProfileIdJson};
+        window.__initialTab = ${initialTabJson};
         window.__defaultBuildParameters = ${defaultBuildParametersJson};
         window.__buildParameterDefinitions = ${buildParameterDefinitionsJson};
         window.__vanessaParameterDefinitions = ${vanessaParameterDefinitionsJson};

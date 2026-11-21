@@ -1,0 +1,1703 @@
+{
+  "tools": [
+    {
+      "name": "manage_breakpoints",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Действие: 'toggle', 'remove_all', 'list'. По умолчанию 'toggle'.",
+            "type": "string"
+          },
+          "line": {
+            "description": "Положительное целое число — номер строки для toggle. Если не указан, переключается текущая строка курсора. Некорректное значение отклоняется как INVALID_PARAMS.",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_event_log_manager",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "application": {
+            "description": "Имя приложения; несколько значений - через '|'.",
+            "type": "string"
+          },
+          "columns": {
+            "description": "Колонки ответа через '|'. Доступные логические имена: date, level, event, event_presentation, comment, metadata, metadata_presentation, data, data_presentation, user (имя пользователя по идентификатору), user_name, computer, application, application_presentation, connection, session, server, port, sync_port, transaction, transaction_status. Значение 'all' - все колонки. По умолчанию: date|level|event|comment|user|computer|session|metadata. Тяжёлая колонка data в набор по умолчанию не входит. Неизвестное имя - ошибка INVALID_PARAMS.",
+            "type": "string"
+          },
+          "comment": {
+            "description": "Комментарий события. Несколько значений через '|' не поддерживаются - передавайте один комментарий.",
+            "type": "string"
+          },
+          "comment_match_type": {
+            "description": "Как сравнивать comment: 'exact' (по умолчанию), 'partial' или 'starts_with' (отбор в целевой базе).",
+            "type": "string"
+          },
+          "computer": {
+            "description": "Компьютер; несколько значений - через '|'.",
+            "type": "string"
+          },
+          "data": {
+            "description": "Ссылка в колонке \"Данные\": навигационная ссылка вида e1cib/data/... (её возвращают инструменты VA) либо строка ЗначениеВСтрокуВнутр.",
+            "type": "string"
+          },
+          "data_max_length": {
+            "description": "Обрезка значения колонки data в символах (по умолчанию 300, 0 - без обрезки). Действует, только если колонка data запрошена.",
+            "type": "number"
+          },
+          "data_presentation": {
+            "description": "Представление данных (колонка \"ПредставлениеДанных\").",
+            "type": "string"
+          },
+          "date_end": {
+            "description": "Конец периода (включая указанную секунду). Форматы те же, что у date_start; если время не указано, берётся конец дня (23:59:59). По умолчанию - текущее время целевой базы.",
+            "type": "string"
+          },
+          "date_start": {
+            "description": "Начало периода. Форматы: \"ДД.ММ.ГГГГ\", \"ДД.ММ.ГГГГ чч:мм[:сс]\", \"ГГГГ-ММ-ДД\", \"ГГГГ-ММ-ДД чч:мм[:сс]\". Если время не указано, берётся начало дня (00:00:00). По умолчанию - час назад от текущего времени целевой базы.",
+            "type": "string"
+          },
+          "display_order": {
+            "description": "Порядок вывода строк: 'desc' (по умолчанию, от новых к старым) или 'asc'. На состав выборки не влияет.",
+            "type": "string"
+          },
+          "event": {
+            "description": "Событие: системное имя (например, _$Data$_.Update) или представление (например, \"Данные. Изменение\"); несколько значений - через '|'. По умолчанию - все события.",
+            "type": "string"
+          },
+          "event_match_type": {
+            "description": "Как сравнивать event: 'exact' (по умолчанию; системные имена отбирает платформа, представления - в целевой базе), 'partial' или 'starts_with' (отбор в целевой базе).",
+            "type": "string"
+          },
+          "level": {
+            "description": "Уровень события: Информация, Ошибка, Предупреждение, Примечание (или Information, Error, Warning, Note); несколько значений - через '|'. Неизвестное значение - ошибка INVALID_PARAMS.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Сколько строк вернуть. По умолчанию 100, максимум 1000. Возвращаются самые свежие события, удовлетворяющие отбору. Значение 0 недопустимо.",
+            "type": "number"
+          },
+          "metadata": {
+            "description": "Полное имя объекта метаданных на языке целевой базы (например, \"Документ.РеализацияТоваровУслуг\"); несколько значений - через '|'. Неизвестное имя - ошибка ACTION_FAILED.",
+            "type": "string"
+          },
+          "output_file": {
+            "description": "Путь к файлу на компьютере, где работает Vanessa Automation: полный ответ (markdown или json) записывается в файл, существующий файл перезаписывается, в ответе MCP остаются шапка со счётчиками, путь, размер и превью. Необязательный.",
+            "type": "string"
+          },
+          "output_format": {
+            "description": "Формат ответа и файла: 'markdown' (по умолчанию) или 'json'. Формат 'json' требует output_file.",
+            "type": "string"
+          },
+          "port": {
+            "description": "Номер основного IP-порта рабочего процесса; несколько значений - через '|'.",
+            "type": "integer"
+          },
+          "scan_limit": {
+            "description": "Бюджет сканирования: сколько событий разрешено прочитать из журнала (по умолчанию 1000, максимум 20000). Если бюджет оборвал чтение, в ответе будет признак достижения бюджета и предупреждение о непрочитанных событиях.",
+            "type": "number"
+          },
+          "server": {
+            "description": "Рабочий сервер; несколько значений - через '|'.",
+            "type": "string"
+          },
+          "session": {
+            "description": "Номер сеанса; несколько значений - через '|'.",
+            "type": "integer"
+          },
+          "sync_port": {
+            "description": "Номер вспомогательного IP-порта рабочего процесса; несколько значений - через '|'.",
+            "type": "integer"
+          },
+          "transaction": {
+            "description": "Идентификатор транзакции; несколько значений - через '|'.",
+            "type": "string"
+          },
+          "transaction_status": {
+            "description": "Статус транзакции: Зафиксирована, Отменена, НеЗавершена, НетТранзакции (или Committed, RolledBack, Unfinished, NotApplicable); несколько значений - через '|'.",
+            "type": "string"
+          },
+          "user": {
+            "description": "Пользователь (имя пользователя информационной базы); несколько значений - через '|'.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_data_from_knowledge_base",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "file_path": {
+            "description": "Путь к файлу, в который будет записана вся база знаний. Обязателен для format='save_to_file'. Путь указывает вызывающая сторона; файл создаётся на компьютере, где работает Vanessa Automation, существующий файл перезаписывается; в веб-клиенте запись недоступна.",
+            "type": "string"
+          },
+          "format": {
+            "description": "Формат получения ответа:\n'short_info'. Рекомендуется вызвать хотя бы один раз с значением format=short_info, чтобы получить короткую информацию о базе знаний: сколько в ней есть вопросов, каков размер всей базы знаний (количество символов).\n'questions_only'. Возвращает только текст вопросов и их номера, чтобы потом можно было получить ответ по номеру вопроса.\n'questions'. Возвращает ответы на вопросы, номера которых переданы в question_number (поддерживаются отдельные номера, диапазоны и перечисления: '12', '10-15', '7,12,20-22', '5, 8-10'). Так можно получать базу знаний порциями и не расходовать контекст.\n'one_question'. Возвращает ответ по номеру вопроса. В параметре question_number нужно передать номер вопроса.\n'question_search'. Выполняет поиск по вопросам. В параметр 'search_string' передаётся строка для поиска. Можно использовать разделитель для поиска по нескольким значениям. Поиск не чувствителен к регистру. Пример строки поиска: 'кнопка|кнопку'.\n'answers_search'. Выполняет поиск по ответам. В параметр 'search_string' передаётся строка для поиска. Можно использовать разделитель для поиска по нескольким значениям. Поиск не чувствителен к регистру. Пример строки поиска: 'кнопка|кнопку'.\n'all'. Возвращает всю базу знаний в виде текста. Перед получением всей базы рекомендуется выполнить поиск с помощью question_search, answers_search или получить все вопросы с помощью questions_only. Если символов в полученном тексте меньше указанного в начале ответа количества символов, ответ обрезан MCP-клиентом: читайте базу порциями (format=questions, question_number='1-20', затем '21-40' и так далее) или сохраните её в файл (format='save_to_file').\n'save_to_file'. Записывает всю базу знаний в текстовый файл в кодировке UTF-8 и возвращает путь к файлу и размер данных. Путь к файлу передаётся в параметре file_path; параметр обязателен для этого формата. Файл создаётся на компьютере, где работает Vanessa Automation, а не на стороне MCP-клиента. Используйте, когда нужно прочитать всю базу знаний без риска обрезки ответа.",
+            "type": "string"
+          },
+          "question_number": {
+            "description": "Номер вопроса, диапазон или перечисление номеров: '12', '10-15', '7,12,20-22'. Используется в format='one_question' и format='questions'.\nПробелы допускаются. Диапазон задаётся через дефис, перечисление - через запятую. Для format='one_question' указывайте один номер или один диапазон.",
+            "type": "string"
+          },
+          "search_string": {
+            "description": "Строка поиска",
+            "type": "string"
+          }
+        },
+        "required": [
+          "format"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "run_scenario",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "description": "Путь к .feature файлу. Каталог не принимается. Если указан — файл будет загружен в дерево и открыт в редакторе перед запуском.",
+            "type": "string"
+          },
+          "lineNumber": {
+            "description": "Номер строки в файле (нельзя передавать случайное число: нужен реальный номер строки, в которой находится шаг сценария, который можно выполнить). Если в указанной строке шага нет, будет выполнен ближайший шаг ниже. Обязателен для режима 'reloadAndRunFromLine'.",
+            "type": "integer"
+          },
+          "mode": {
+            "description": "Режим запуска: 'all' (по умолчанию — все сценарии загруженного feature файла или feature файлов), 'reloadAndRun' (перезагрузить и запустить все сценарии feature файла), 'selected' (выбранный в редакторе), 'fromCurrentStep' (с текущего шага), 'reloadAndRunFromLine' (перезагрузить feature файл и выполнить сценарий с указанной строки).",
+            "type": "string"
+          },
+          "wait": {
+            "description": "Ждать завершения прогона. По умолчанию true. false — инструмент отвечает сразу после старта прогона, не дожидаясь завершения: ход прогона смотрите через get_vanessa_automation_state, результат — через get_test_results, остановку делайте через stop_scenario; прогресс по шагам при этом не отправляется.",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "execute_form_actions",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "actions_json": {
+            "description": "JSON-строка с массивом действий для последовательного выполнения. Формат: [{\"action\": \"...\", ...}, ...]. Обязательный параметр.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actions_json"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "frequently_used_steps",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "compact": {
+            "description": "Компактный вывод: по одной строке на шаг без полного описания. По умолчанию true.\nУкажите false, чтобы получить полные описания шагов.",
+            "type": "boolean"
+          },
+          "limit": {
+            "description": "Сколько шагов вернуть. Параметр необязательный. Значение по умолчанию 20. 0 — вернуть все результаты.",
+            "type": "number"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_window_screenshot_os",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "color_mode": {
+            "description": "Режим цвета скриншота: 'grayscale' (черно-белый, по умолчанию) или 'color' (цветной).",
+            "type": "string"
+          },
+          "file_name": {
+            "description": "Имя файла куда сохранить скриншот в формате png. Необязательный параметр. Если имя файла не указано, то файл будет создан во временном каталоге.",
+            "type": "string"
+          },
+          "window_title": {
+            "description": "Заголовок окна, с которого нужно снять скриншот.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "window_title"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "close_test_client",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "profileName": {
+            "description": "Имя профиля клиента тестирования для закрытия. Если не указано — закроет текущий подключённый профиль.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_vanessa_automation_state",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "description": "Формат ответа: markdown (по умолчанию) или json. JSON содержит schemaVersion (1.1), mcpVersion, vaVersion, runId, isRunning, ok, stateAvailable/stateReason, текущую фичу (tags — массив строк), сценарий (resultKind — scenario или single_step; isComplete — есть финальный статус или результат одиночного шага), текущий шаг (name/lineNumber/id/status/statusRaw), упавший шаг (name/lineNumber/id/status/statusRaw/error), счётчики; полный список шагов — в get_test_results; значения параметров шага в JSON не выводятся; отсутствующие строковые значения передаются пустой строкой, tags — всегда массив строк, isComplete — булево.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "select_step",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "lineNumber": {
+            "description": "Номер строки фича файла. Обязательный параметр.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "lineNumber"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "load_features",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "description": "Путь к .feature файлу. Каталог не принимается. Если не указан — перезагрузка текущего файла в редакторе.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_active_form_element",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "include_edit_text": {
+            "description": "true - прочитать текст текущего редактирования активного поля шапки или колонки таблицы. Возвращается в edit_text; не завершает редактирование и не фиксирует значение. По умолчанию false.",
+            "type": "boolean"
+          },
+          "include_row_values": {
+            "description": "true - добавить представление текущей строки, если выделена ровно одна строка (может содержать данные). При нескольких выделенных строках текущая строка может быть не определена, представление не возвращается (row.representation = null), а row.selected_count показывает количество. По умолчанию false - возвращается только количество выделенных строк.",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "manage_editor",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Действие: get_state, list_tabs, activate_tab, get_tab_content, save_tab, close_tab, line_info, list_breakpoints, toggle_breakpoint, remove_all_breakpoints.",
+            "type": "string"
+          },
+          "allowDuringRun": {
+            "description": "Разрешить activate_tab во время прогона сценариев. По умолчанию false.",
+            "type": "boolean"
+          },
+          "filePath": {
+            "description": "Точный filename вкладки. Поддерживает memory:. Один из селекторов index/filePath/title.",
+            "type": "string"
+          },
+          "includeContent": {
+            "description": "Для get_state: включить текст активного документа. По умолчанию true.",
+            "type": "boolean"
+          },
+          "includeDocument": {
+            "description": "Для get_state: включить блок активного документа и сценарии дерева. По умолчанию true.",
+            "type": "boolean"
+          },
+          "includeTabs": {
+            "description": "Для get_state: включить список открытых вкладок. По умолчанию true.",
+            "type": "boolean"
+          },
+          "index": {
+            "description": "Номер вкладки с 0. Один из селекторов index/filePath/title.",
+            "type": "integer"
+          },
+          "line": {
+            "description": "Для toggle_breakpoint: номер строки. Если не указан — текущая строка курсора.",
+            "type": "integer"
+          },
+          "lineNumber": {
+            "description": "Для line_info: обязательное положительное целое число — номер строки сценария.",
+            "type": "integer"
+          },
+          "maxLength": {
+            "description": "Для get_tab_content: максимум символов. По умолчанию 20000, 0 — весь текст.",
+            "type": "integer"
+          },
+          "saveChanges": {
+            "description": "Для close_tab: сохранить изменения перед закрытием. По умолчанию false.",
+            "type": "boolean"
+          },
+          "title": {
+            "description": "Точный заголовок вкладки без учёта регистра. Один из селекторов index/filePath/title.",
+            "type": "string"
+          },
+          "type": {
+            "description": "Фильтр типа вкладки: any, edit, diff, viewer. По умолчанию any.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_extension_list",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_test_results",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "description": "Формат ответа: markdown (по умолчанию) или json. JSON содержит schemaVersion (1.1), mcpVersion, vaVersion, runId, isRunning, ok, requestedScenarioId, scenarioId/treeRowId, имя сценария и фичи, status/statusRaw (у одиночного шага статус берётся из его шага), resultKind (scenario или single_step), isComplete (есть финальный статус или результат одиночного шага), ошибку, шаги с id/lineNumber/status/error и счётчики; ok означает успешность вызова, а не успешность теста, результат теста — status; при отсутствии результата ok=false, isComplete=false и reason: result_not_ready, no_results или scenario_not_run; значения параметров шага не выводятся; отсутствующие строковые значения передаются пустой строкой, isComplete — булево.",
+            "type": "string"
+          },
+          "scenarioId": {
+            "description": "Числовой ID строки сценария в дереве (поле treeRowId в currentScenario из get_vanessa_automation_state; заполняется во время выполнения — снимайте во время прогона). Если не указан — последний выполненный.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "manage_test_client",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Действие над клиентом тестирования. Возможные значения:\n'connect' — подключить клиент тестирования по имени профиля (требуется profileName).\n'disconnect' — отключить текущего клиента тестирования.",
+            "type": "string"
+          },
+          "profileName": {
+            "description": "Имя профиля клиента тестирования. Обязателен для action='connect'.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_object_attributes",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "attribute_name": {
+            "description": "Имя реквизита для получения значения: реквизит шапки или колонка табличной части. Используется только при data_mode='single_attribute'. Обязательный параметр для этого режима.",
+            "type": "string"
+          },
+          "data_mode": {
+            "description": "Режим получения данных: 'all' (все данные - шапка и табличные части), 'attributes_only' (только реквизиты шапки), 'single_attribute' (значение указанного реквизита; если это колонка табличной части - первая строка этой части), 'tabular_sections_only' (только все табличные части), 'single_tabular_section' (только указанная табличная часть). По умолчанию 'attributes_only'.",
+            "type": "string"
+          },
+          "format": {
+            "description": "Формат ответа: 'markdown' (по умолчанию) или 'json'. JSON поддерживается для data_mode='all', 'attributes_only', 'tabular_sections_only', 'single_tabular_section'; для 'single_attribute' не поддерживается.",
+            "type": "string"
+          },
+          "navigationLink": {
+            "description": "Навигационная ссылка на элемент (её возвращает get_table_data). Если указана, реквизиты читаются из базы по ссылке и открытая форма не нужна; остальные параметры (data_mode, attribute_name, tabular_section_name, only_filled, row_numbers, row_ranges, format) применяются к прочитанным данным. Тот же набор параметров режима (кроме row_numbers, row_ranges и format) поддерживает get_table_data при object_type = 6 (navigationLink). Необязательный параметр.",
+            "type": "string"
+          },
+          "only_filled": {
+            "description": "Возвращать только заполненные реквизиты: true (только заполненные, по умолчанию), false (все реквизиты). В режиме single_attribute не применяется: для колонки табличной части в этом режиме первая строка печатается целиком, пустые строки и ссылки - прочерком (—), пустая дата, 0 и Ложь печатаются своим представлением. В режимах с табличными частями true пропускает строки без заполненных значений. В режиме single_tabular_section не применяется: возвращаются все строки.",
+            "type": "boolean"
+          },
+          "row_numbers": {
+            "description": "Номера строк через запятую: '1,3,5'. Только при data_mode='single_tabular_section' вместе с tabular_section_name. Нумерация 1-based, как в табличной части объекта; номер - положительное целое не более чем из 12 цифр. Объединяется с row_ranges, дубликаты убираются, вывод по возрастанию. Необязательный параметр.",
+            "type": "string"
+          },
+          "row_ranges": {
+            "description": "Диапазоны строк через запятую: '1-100,200-300'. Только при data_mode='single_tabular_section' вместе с tabular_section_name. Границы - положительные целые не более чем из 12 цифр; пересекающиеся диапазоны объединяются. Необязательный параметр.",
+            "type": "string"
+          },
+          "tabular_section_name": {
+            "description": "Имя табличной части для получения данных. Используется только при data_mode='single_tabular_section'. Обязательный параметр для этого режима.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "stop_scenario",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "find_form_elements",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "description": "Максимум элементов в ответе. По умолчанию 50, 0 - без ограничения.",
+            "type": "number"
+          },
+          "search_by": {
+            "description": "Где искать: 'all' (по умолчанию) - по заголовку и по имени, 'title' - только по заголовку, 'name' - только по имени элемента.",
+            "type": "string"
+          },
+          "search_string": {
+            "description": "Строка поиска. Символ * - маска. Обязательный параметр; пустая строка не допускается.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "search_string"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "manage_form_elements",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Действие над элементом формы. Обязательный параметр. Допустимые значения: 'click_button', 'input_text', 'open_dropdown', 'get_dropdown_state', 'select_from_dropdown', 'set_value', 'open_choice_form', 'set_radio_button', 'set_checkbox', 'unset_checkbox', 'toggle_checkbox', 'click_hyperlink', 'simulate_tab', 'activate_column', 'navigate_next_column', 'navigate_previous_column', 'start_edit_row', 'end_edit_row', 'navigate_to_row', 'navigate_next_row', 'navigate_previous_row', 'choose_row', 'get_selected_rows', 'create_new', 'switch_tab', 'toggle_group', 'activate_header_element', 'clear_field', 'clear_message_window', 'select_from_form_dropdown', 'add_row', 'copy_row', 'delete_row', 'go_one_level_down', 'go_one_level_up', 'goto_first_row', 'goto_last_row', 'goto_next_item', 'goto_previous_item', 'is_expanded', 'select_all_rows', 'select_row', 'set_cell_text', 'set_order', 'switch_row_delete_mark', 'begin_edit_current_area', 'end_edit_current_area', 'get_current_area_address', 'get_current_area_text', 'get_doc_area_horizontal_size', 'get_doc_area_vertical_size', 'get_formatted_string_hyperlink_presentations', 'set_area_text', 'set_current_area', 'cancel_edit', 'current_opened', 'decrease_value', 'increase_value', 'goto_value', 'current_modified', 'execute_choice_from_menu', 'goto_date', 'manage_modal_dialog'. Подробное описание каждого действия и требуемых параметров - вопрос №129 базы знаний: get_data_from_knowledge_base, format=\"questions\", question_number=129 (поиск при смещении нумерации: format=\"question_search\", search_string=\"manage_form_elements\").",
+            "type": "string"
+          },
+          "area": {
+            "description": "Адрес или имя области табличного документа (например, 'R4C2'). Обязателен для set_area_text и set_current_area; необязателен для get_current_area_text.",
+            "type": "string"
+          },
+          "date": {
+            "description": "Дата в формате 'ДД.ММ.ГГГГ' для действия goto_date. Обязателен для goto_date.",
+            "type": "string"
+          },
+          "element_name": {
+            "description": "Имя элемента формы (внутреннее имя) для выполнения действия. Обязательный параметр для большинства действий. Для ячейки таблицы (с table_name) допускается заголовок колонки вместо внутреннего имени. Для действия 'switch_tab' - имя закладки/страницы формы (группы формы). Для действия 'manage_modal_dialog' - заголовок или имя кнопки модального диалога.",
+            "type": "string"
+          },
+          "exact_match": {
+            "description": "Способ выбора значения для действия set_value: false (по умолчанию) - выбор по строке: инструмент вводит value в поле как текст и выбирает элемент из сформированного по этому тексту списка; true - точное значение: выбор из уже сформированного списка по значению (представлению), без ввода текста в поле. Для ссылочных типов с вводом по строке используйте false (по умолчанию), для перечислений и статических списков - true. В ответе на успех выводится представление выбранного элемента (\"Выбрано из списка: ...\") - сверяйте его с ожидаемым значением. Необязательный параметр.",
+            "type": "boolean"
+          },
+          "expect_text": {
+            "description": "Для действия manage_modal_dialog: ожидаемая подстрока текста модального диалога (сравнение без учёта регистра). Если текст диалога её не содержит - действие завершается ошибкой. Необязательный параметр.",
+            "type": "string"
+          },
+          "full": {
+            "description": "Для действия get_selected_rows: true - вернуть представление строки целиком, без сокращения (то же, что max_length=0). По умолчанию длинное представление сокращается и в ответе появляется подсказка про full=true. Необязательный параметр.",
+            "type": "boolean"
+          },
+          "full_row": {
+            "description": "Для действия delete_row: true - вернуть полное представление удалённой строки (ответ длиннее), false (по умолчанию) - вернуть компактную сводку по строке. Необязательный параметр.",
+            "type": "boolean"
+          },
+          "hyperlink_index": {
+            "description": "Индекс гиперссылки (начиная с 0; 0 - первая гиперссылка) для нажатия. Используется для действия click_hyperlink, когда в поле несколько гиперссылок. Представления гиперссылок возвращает действие get_formatted_string_hyperlink_presentations. Необязательный параметр.",
+            "type": "number"
+          },
+          "hyperlink_title": {
+            "description": "Заголовок гиперссылки для нажатия. Используется для действия click_hyperlink, когда в поле несколько гиперссылок. Необязательный параметр.",
+            "type": "string"
+          },
+          "max_length": {
+            "description": "Для действия get_selected_rows: предел длины представления строки в символах (например, 1000). 0 - без ограничения. По умолчанию около 300 символов. Необязательный параметр.",
+            "type": "number"
+          },
+          "menu_path": {
+            "description": "Путь к пункту уже раскрытого меню формы для действия execute_choice_from_menu: меню нужно открыть предыдущим действием (например, click_button). Уровни разделяются '\\n'. Обязателен для execute_choice_from_menu.",
+            "type": "string"
+          },
+          "optional": {
+            "description": "Для действия manage_modal_dialog: true - если модального диалога нет, действие пропускается без ошибки (по умолчанию false - отсутствие диалога это ошибка). Необязательный параметр.",
+            "type": "boolean"
+          },
+          "order": {
+            "description": "Имя колонки для действия set_order (установка порядка таблицы): имя реквизита табличной части, полное имя поля формы или заголовок колонки. Обязателен для set_order.",
+            "type": "string"
+          },
+          "percent": {
+            "description": "Проценты для действия goto_value (полоса регулирования). Обязателен для goto_value. Число 0-100.",
+            "type": "number"
+          },
+          "row_criteria": {
+            "description": "Критерии для перехода к строке таблицы (действие navigate_to_row). Формат: 'Колонка=Значение;Колонка2=Значение2'. Колонка указывается заголовком или внутренним именем поля формы.",
+            "type": "string"
+          },
+          "tab_direction": {
+            "description": "Направление перехода для действия simulate_tab: 'next' (к следующему элементу, по умолчанию), 'previous' (к предыдущему элементу). Необязательный параметр.",
+            "type": "string"
+          },
+          "table_name": {
+            "description": "Имя табличной части, если элемент находится в таблице. Если поле или кнопка находится в таблице, то этот параметр обязательно указывать.",
+            "type": "string"
+          },
+          "value": {
+            "description": "Значение для ввода/выбора. Используется в действиях input_text, set_value, select_from_dropdown, set_cell_text, set_area_text, toggle_group, select_from_form_dropdown, activate_column (имя реквизита табличной части, полное имя поля формы или заголовок колонки) и других; конкретные требования - в вопросе №129 базы знаний. Для set_radio_button обязателен: представление (текст) варианта переключателя, как в списке выбора. Для navigate_to_row используйте отдельный параметр row_criteria. Необязательный параметр, кроме действий, где он обязателен.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_info_about_line_scenario",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "lineNumber": {
+            "description": "Номер строки. Обязательное положительное целое число.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "lineNumber"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "manage_clipboard",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Действие с буфером обмена. Возможные значения:\n'set_text' - поместить текст в буфер обмена (требуется параметр text);\n'get_text' - вернуть текстовое содержимое буфера обмена;\n'clear' - очистить буфер обмена.",
+            "type": "string"
+          },
+          "text": {
+            "description": "Текст для помещения в буфер обмена. Обязателен для action='set_text'. Многострочный текст передавайте целиком: переводы строк сохраняются. Максимум 100000 символов. Необязательный.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_va_settings",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Действие: list (по умолчанию), get, groups.",
+            "type": "string"
+          },
+          "available_only": {
+            "description": "true — вернуть только настройки, доступные для редактирования на форме сейчас. По умолчанию false.",
+            "type": "boolean"
+          },
+          "format": {
+            "description": "Формат ответа: markdown (по умолчанию) или json.",
+            "type": "string"
+          },
+          "group": {
+            "description": "Фильтр по группе настроек, например ОтчетAllure или ЗаписьВидео.",
+            "type": "string"
+          },
+          "include_allowed_values": {
+            "description": "Включать допустимые значения для списков и перечислений. По умолчанию false.",
+            "type": "boolean"
+          },
+          "include_defaults": {
+            "description": "Включать значения по умолчанию и их источник. По умолчанию false.",
+            "type": "boolean"
+          },
+          "include_ui_state": {
+            "description": "Включать состояние элемента формы: visible, enabled, read_only, available_for_edit, availability_reason. По умолчанию false.",
+            "type": "boolean"
+          },
+          "include_values": {
+            "description": "Включать текущие значения. По умолчанию true.",
+            "type": "boolean"
+          },
+          "key": {
+            "description": "Ключ настройки для action=get: русское имя, английский json-ключ или имя реквизита.",
+            "type": "string"
+          },
+          "keys": {
+            "description": "Список ключей через запятую для точного отбора.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Сколько настроек вернуть. По умолчанию 50, максимум 200. 0 — все.",
+            "type": "integer"
+          },
+          "match": {
+            "description": "Режим поиска: contains (по умолчанию), starts_with, exact.",
+            "type": "string"
+          },
+          "offset": {
+            "description": "Смещение для пагинации. По умолчанию 0.",
+            "type": "integer"
+          },
+          "path": {
+            "description": "Путь настройки для action=get, например ОтчетAllure.КаталогВыгрузкиAllure.",
+            "type": "string"
+          },
+          "path_prefix": {
+            "description": "Фильтр по началу path, например ОтчетAllure.",
+            "type": "string"
+          },
+          "query": {
+            "description": "Строка поиска для action=list. Поиск по частичному совпадению без учёта регистра; ё приводится к е, разделители _ - пробел и точка игнорируются.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "restart_vanessa",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "infobase_info",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_for_steps_by_keywords",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "compact": {
+            "description": "Компактный вывод: по одной строке на шаг без полного описания. По умолчанию true.\nУкажите false, чтобы получить полные описания найденных шагов.",
+            "type": "boolean"
+          },
+          "conditions_only": {
+            "description": "Если передано значение true, то будут отбираться только шаги, которые всегда являются условиями. Значение по умолчанию false. Необязательный.",
+            "type": "boolean"
+          },
+          "exclude_description": {
+            "description": "Поисковый запрос без учета регистра. Шаг будет исключен из результата поиска, если в описании шага будет найдено указанное значение.\nДля альтернатив по принципу ИЛИ используйте разделитель '|', например 'первая часть|вторая часть'. Если параметр не указан — возвращаются все шаги.",
+            "type": "string"
+          },
+          "exclude_name": {
+            "description": "Поисковый запрос без учета регистра. Шаг будет исключен из результата поиска, если в представлении шага будет найдено указанное значение.\nДля альтернатив по принципу ИЛИ используйте разделитель '|', например 'первая часть|вторая часть'. Если параметр не указан — возвращаются все шаги.",
+            "type": "string"
+          },
+          "exclude_type": {
+            "description": "Поисковый запрос без учета регистра. Шаг будет исключен из результата поиска, если в типе шага будет найдено указанное значение.\nДля альтернатив по принципу ИЛИ используйте разделитель '|', например 'первая часть|вторая часть'. Если параметр не указан — возвращаются все шаги.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Максимальное количество результатов. 0 — вернуть все результаты. По умолчанию 20.",
+            "type": "number"
+          },
+          "loops_only": {
+            "description": "Если передано значение true, то будут отбираться только шаги, которые являются циклами. Значение по умолчанию false. Необязательный.",
+            "type": "boolean"
+          },
+          "search_description": {
+            "description": "Поисковый запрос без учета регистра. Строка ищется как подстрока в описании шага.\nДля альтернатив по принципу ИЛИ используйте разделитель '|', например 'первая часть|вторая часть'. Если параметр не указан — возвращаются все шаги.",
+            "type": "string"
+          },
+          "search_name": {
+            "description": "Поисковый запрос без учета регистра. Строка ищется как подстрока в представлении шага.\nДля альтернатив по принципу ИЛИ используйте разделитель '|', например 'первая часть|вторая часть'. Если параметр не указан — возвращаются все шаги.",
+            "type": "string"
+          },
+          "search_type": {
+            "description": "Поисковый запрос без учета регистра. Строка ищется как подстрока в типе шага.\nДля альтернатив по принципу ИЛИ используйте разделитель '|', например 'первая часть|вторая часть'. Если параметр не указан — возвращаются все шаги.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "check_syntax",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "description": "Путь к .feature файлу. Лучше передавать полный путь к файлу.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filePath"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "execute_feature_step",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "details": {
+            "description": "Вернуть расширенный ответ: режим, requestedLine/executedLine, файл дерева. executedLine — фактически выполненная строка: для строки таблицы — строка шага-владельца, для группы шагов — первый исполняемый шаг. По умолчанию false — прежний текст.",
+            "type": "boolean"
+          },
+          "filePath": {
+            "description": "Путь к .feature файлу. Если параметр не указан, то команда будет выполняться в текущей вкладке редактора в уже открытом файле.",
+            "type": "string"
+          },
+          "lineNumber": {
+            "description": "Номер строки в файле (начиная с 1).",
+            "type": "integer"
+          },
+          "reload": {
+            "description": "Принудительно загрузить фичу перед шагом. По умолчанию false: уже загруженная фича выполняется без загрузки.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "lineNumber"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "voice_notification",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "language": {
+            "description": "Язык озвучки: 'ru' (русский, по умолчанию), 'en' (английский). Необязательный параметр.",
+            "type": "string"
+          },
+          "notification_type": {
+            "description": "Тип уведомления: 'task_completed' (задание выполнено), 'decision_required' (нужно принять решение), 'task_cannot_be_completed' (задание не может быть выполнено), 'error_occurred' (возникла ошибка при выполнении задания). Обязательный параметр.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "notification_type"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_environment_data",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "save_table_document_to_file",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "file_name": {
+            "description": "Полный путь к файлу для сохранения табличного документа. Обязательный параметр.",
+            "type": "string"
+          },
+          "form_element_name": {
+            "description": "Имя элемента формы (табличного документа) для сохранения. Обязательный параметр.",
+            "type": "string"
+          },
+          "format": {
+            "description": "Формат файла: 'mxl' (MXL, по умолчанию), 'xlsx' (Excel), 'pdf' (PDF).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_name",
+          "form_element_name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_editor_state",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "includeContent": {
+            "description": "Включить полный текст активного документа. По умолчанию true.",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "manage_app",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Действие над приложением. Обязательный параметр. Допустимые значения: 'set_file_dialog_result', 'clear_file_dialog_result'.",
+            "type": "string"
+          },
+          "cancel": {
+            "description": "Для действия set_file_dialog_result: Истина = отмена диалога, Ложь = файл выбран (по умолчанию). При cancel=Ложь параметр file_name обязателен.",
+            "type": "boolean"
+          },
+          "file_name": {
+            "description": "Для действия set_file_dialog_result: путь к выбранному файлу. Обязателен при cancel=Ложь.",
+            "type": "string"
+          },
+          "filter_index": {
+            "description": "Для действия set_file_dialog_result: индекс фильтра выбора (целое неотрицательное число). Необязательный.",
+            "type": "number"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_table_data",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "attribute_name": {
+            "description": "Имя реквизита для data_mode='single_attribute' (реквизит шапки или колонка табличной части; для колонки возвращается первая строка этой части). Используется только при object_type = 6. Необязательный параметр.",
+            "type": "string"
+          },
+          "data_mode": {
+            "description": "Режим чтения реквизитов при object_type = 6 (по navigationLink): 'all' (все данные - шапка и табличные части), 'attributes_only' (только реквизиты шапки, по умолчанию), 'single_attribute' (значение реквизита из attribute_name), 'tabular_sections_only' (только все табличные части), 'single_tabular_section' (одна табличная часть из tabular_section_name). Набор и поведение параметров - как у get_object_attributes, кроме row_numbers, row_ranges и format: они относятся только к get_object_attributes. Применяется только при object_type = 6; при других object_type не передавайте его - для совместимости принимается лишь явное 'all' (прежнее значение по умолчанию), оно не применяется. Необязательный параметр.",
+            "type": "string"
+          },
+          "date_end": {
+            "description": "Дата окончания периода для документов (форматы и умолчание - в описании инструмента). Пример: 30.06.2024. Необязательный параметр.",
+            "type": "string"
+          },
+          "date_start": {
+            "description": "Дата начала периода для документов (форматы и умолчание - в описании инструмента). Пример: 01.06.2024. Необязательный параметр.",
+            "type": "string"
+          },
+          "end_number": {
+            "description": "Конечный номер константы в диапазоне (1-based, включительно). Используется только для object_type = 5 (все константы). Если не указан, равен общему количеству констант в базе. Необязательный параметр.",
+            "type": "number"
+          },
+          "filter": {
+            "description": "Отбор по реквизитам объекта: одно условие в строке, \"ИмяРеквизита [оператор] Значение\". Операторы: = <> > >= < <= ПОДОБНО (LIKE) СОДЕРЖИТ (CONTAINS), по умолчанию =. Условия соединяются по \"И\". Строки с // или # в начале игнорируются. Примеры: \"Проведен = Да\", \"Контрагент = Альфа\", \"Дата >= 01.06.2024\", \"Наименование СОДЕРЖИТ ООО\". Необязательный параметр; работает для справочников, документов и планов видов характеристик.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Максимальное количество элементов для возврата. Значение по умолчанию 10. Не имеет смысла передавать параметр для перечислений, т.к. это всегда фиксированный набор значений.",
+            "type": "number"
+          },
+          "name_filter": {
+            "description": "Отбор по наименованию элемента. Работает для Справочников и Планов видов характеристик. Для документов (object_type = 2) не применяется - у документов нет реквизита \"Наименование\", используйте filter, например filter=\"Номер = мп00-000001\". Необязательный параметр.",
+            "type": "string"
+          },
+          "name_match_type": {
+            "description": "Режим сравнения значения name_filter с наименованием элемента справочника (для документов не применяется). Допустимые значения: \"exact\" (точное совпадение, по умолчанию, обратная совместимость), \"partial\" (частичное совпадение, в любом месте наименования), \"starts_with\" (наименование начинается со значения). Работает только совместно с параметром name_filter. Необязательный параметр.",
+            "type": "string"
+          },
+          "navigationLink": {
+            "description": "Навигационная ссылка объекта для получения реквизитов. Необязательный параметр, требуется при object_type = 6.",
+            "type": "string"
+          },
+          "object_name": {
+            "description": "Имя справочника или документа или перечисления или константы или плана видов характеристик. Обязательный параметр для object_type 1-4 и 7.",
+            "type": "string"
+          },
+          "object_type": {
+            "description": "Тип объекта в виде числа: 1 = Справочник, 2 = Документ, 3 = Перечисление, 4 = одна константа, 5 = все константы, 6 = Реквизиты объекта по навигационной ссылке, 7 = План видов характеристик, 8 = все справочники, 9 = все документы, 10 = все перечисления, 11 = все планы видов характеристик. Обязательный параметр.",
+            "type": "number"
+          },
+          "only_filled": {
+            "description": "true - вернуть только заполненные реквизиты объекта (пустые не выводятся; удобно для больших объектов; значение по умолчанию), false - вернуть все реквизиты. Применим только к object_type = 6 (реквизиты объекта по навигационной ссылке); при других object_type не передавайте его - для совместимости принимается лишь явное false (прежнее значение по умолчанию), оно не применяется. Необязательный параметр.",
+            "type": "boolean"
+          },
+          "owner": {
+            "description": "Представление владельца для подчиненного справочника. Сравнивается со ссылкой на владельца (по наименованию/коду). У справочника без реквизита \"Владелец\" параметр вызывает ошибку со списком доступных реквизитов - используйте filter. Необязательный параметр.",
+            "type": "string"
+          },
+          "start_number": {
+            "description": "Начальный номер константы в диапазоне (1-based, включительно). Используется только для object_type = 5 (все константы). Если не указан, равен 1. Необязательный параметр.",
+            "type": "number"
+          },
+          "tabular_section_name": {
+            "description": "Имя табличной части для data_mode='single_tabular_section'. Используется только при object_type = 6. Необязательный параметр.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "object_type"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_window_list_testclient",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "manage_test_client_profiles",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Действие: 'get_list' (получить список профилей), 'add' (добавить профиль), 'edit' (редактировать профиль). Обязательный параметр.",
+            "type": "string"
+          },
+          "additional_parameters": {
+            "description": "Дополнительные параметры подключения. Необязательный параметр для add и edit.",
+            "type": "string"
+          },
+          "client_type": {
+            "description": "Тип клиента (Тонкий (основной вариант), Толстый, Web, МобильныйКлиент, МобильноеПриложение, МобильныйКлиентАвтономный, ОбычноеПриложение). Необязательный параметр для add и edit. Значение по умолчанию 'Тонкий'.",
+            "type": "string"
+          },
+          "computer_name": {
+            "description": "Имя компьютера. Необязательный параметр для add и edit.",
+            "type": "string"
+          },
+          "infobase_path": {
+            "description": "Строка подключения к базе. Необязательный параметр для add и edit.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Имя профиля. Обязательный параметр для add и edit.",
+            "type": "string"
+          },
+          "port": {
+            "description": "Порт запуска/подключения клиента тестирования. Необязательный параметр для add и edit.\n0 или 1 - автоматический выбор порта при запуске нового тонкого, толстого или обычного клиента (0 - значение новой строки по умолчанию).\n2..65535 - конкретный порт; занятый порт при запуске нового клиента заменяется свободным из диапазона 48000-50000. Для Web файловой базы обычно 1538, для серверной - 1541 (при 0 или 1 для Web используется 1538).\nЕсли параметр не указан: add оставляет 0, edit не меняет текущий порт.\nПри заполненной настройке ДиапазонПортовTestclient при запуске нового тонкого/толстого клиента указанный порт будет заменён портом из диапазона.\nИзменение порта подключённого профиля требует переподключения (connect разрывает текущее соединение).",
+            "type": "integer"
+          },
+          "synonym": {
+            "description": "Синоним профиля. Необязательный параметр для add и edit.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "window_management",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Действие: 'activate' (активизировать окно по заголовку), 'close' (закрыть окно по заголовку; часть заголовка - только маской '*...*'), 'open_navigation' (открыть навигационную ссылку). Обязательный параметр.",
+            "type": "string"
+          },
+          "navigation_link": {
+            "description": "Навигационная ссылка для открытия. Обязательный параметр для действия 'open_navigation'.",
+            "type": "string"
+          },
+          "window_title": {
+            "description": "Заголовок внутреннего окна клиента тестирования. Обязательный параметр для действий 'activate' и 'close'. Можно использовать символы * для поиска по частичному совпадению (например, '*Окно*' найдет все окна, содержащие слово 'Окно'). Без маски заголовок должен совпадать целиком.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_active_window_data",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "description": "Параметр type. Может принимать значения: window_caption, navigation_link, form_name, form_caption",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_form_analysis",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "compact": {
+            "description": "По умолчанию true - компактный вывод дерева: код типа и состояние элемента одной буквой, сокращение внутренних имён (у колонок таблиц печатается полное имя; при совпадении имени с заголовком - [=]), легенда в начале ответа. Форматы 'elements', 'full' и 'buttons'. Компактный вывод содержит все элементы, только короче. compact=false - прежний подробный вывод; вид легенды управляется параметром legend. В форматах без дерева ('gherkin', 'messages') параметр не применяется.",
+            "type": "boolean"
+          },
+          "format": {
+            "description": "Формат вывода: 'full' (дерево + Gherkin + Сообщения; Gherkin отключается параметром gherkin=false, состояние компактизируется по gherkin_mode), 'gherkin' (только Gherkin-шаги; состояние компактизируется по gherkin_mode), 'elements' (только дерево элементов, выводятся все элементы формы), 'buttons' (только кнопки; дерево заходит и в таблицы - до кнопок их командных панелей; если кнопок на форме нет, вернётся сообщение об этом), 'messages' (только текст окна сообщений пользвателю). По умолчанию 'full'.",
+            "type": "string"
+          },
+          "gherkin": {
+            "description": "Для формата 'full': по умолчанию true - в ответ включается Gherkin-состояние формы и блок шагов; false - без Gherkin-состояния и шагов (дерево элементов и сообщения пользователю остаются; если Gherkin нужен отдельно, используйте format='gherkin'). Состояние по умолчанию компактизируется: строки с пустыми значениями скрыты (режим задаёт gherkin_mode). Необязательный параметр; в остальных форматах не применяется.",
+            "type": "boolean"
+          },
+          "gherkin_mode": {
+            "description": "Режим Gherkin-состояния: 'filled' (по умолчанию) - строки с пустыми значениями скрываются (пустые, маски из пробелов, двоеточий и точек, дата 01.01.0001); 'compact' - дополнительно скрываются декорации-заглушки (значение совпадает с именем декорации); 'all' - полное состояние, как было до оптимизации (для копирования шагов в тест). Применяется к формату 'gherkin' и к Gherkin-состоянию формата 'full' (когда gherkin=true). Если после фильтрации не осталось ни одной строки состояния, возвращается исходный текст. Необязательный параметр; в остальных форматах не применяется.",
+            "type": "string"
+          },
+          "include_menus": {
+            "description": "true - включить в дерево узлы меню формы (контекстное меню и подменю) вместе с их пунктами. По умолчанию false: меню не выводятся, дерево содержит только интерактивные элементы. Применяется к форматам 'elements' и 'full' (для format='buttons' меню выводятся всегда: пункты меню - это кнопки). Необязательный параметр.",
+            "type": "boolean"
+          },
+          "legend": {
+            "description": "Вид легенды компактного дерева (при compact=true): 'full' (по умолчанию) - полная легенда, 'short' - сокращённая, 'none' - без легенды; при скрытых меню в любом из режимов выводится напоминание про include_menus. Применяется к форматам 'elements', 'full' и 'buttons'. Необязательный параметр; в остальных форматах не применяется.",
+            "type": "string"
+          },
+          "max_depth": {
+            "description": "Ограничить глубину дерева элементов формы: 1 - только элементы верхнего уровня формы, 2 - верхний уровень и их непосредственные дети и так далее. Глубина отсчитывается от формы (служебные узлы окна и формы выводятся всегда как контекст), а при указании only_group - от выбранной группы. Только для форматов 'elements' и 'full' (в 'full' ограничивается только раздел элементов формы). Необязательный параметр.",
+            "type": "number"
+          },
+          "only_group": {
+            "description": "Имя или заголовок группы формы (закладки/страницы): вернуть только эту группу и её содержимое (в формате 'buttons' - только кнопки этой группы). Удобно, когда нужна одна закладка большой формы. Если группа не найдена, возвращается ошибка со списком доступных групп формы. Только для форматов 'elements', 'full' и 'buttons' (в 'full' ограничивается только раздел элементов формы). Необязательный параметр.",
+            "type": "string"
+          },
+          "only_table": {
+            "description": "Имя или заголовок таблицы формы: вернуть данные только по этой таблице (строка на колонку, включая колонки внутри групп, с именем, заголовком, видимостью и толькопросмотром; в формате 'buttons' - только кнопки командной панели этой таблицы). Только для форматов 'elements', 'full' и 'buttons' (в 'full' ограничивается только раздел элементов формы). Необязательный параметр; без него поведение прежнее.",
+            "type": "string"
+          },
+          "only_visible": {
+            "description": "true - вернуть только видимые элементы формы (видимость учитывается с учётом видимости групп-родителей). Только для форматов 'elements' и 'full' (в 'full' ограничивается только раздел элементов формы). Необязательный параметр.",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "manage_va_settings",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Действие: set (по умолчанию) или apply.",
+            "type": "string"
+          },
+          "allow_ci_flags": {
+            "description": "Для action=set: разрешить изменение CI-флагов. По умолчанию false.",
+            "type": "boolean"
+          },
+          "base_path": {
+            "description": "Базовый каталог для относительного file_path.",
+            "type": "string"
+          },
+          "dry_run": {
+            "description": "true — только проверить и вернуть отчёт, не меняя настройки. По умолчанию false.",
+            "type": "boolean"
+          },
+          "expected_current_value": {
+            "description": "Оптимистическая блокировка для action=set: ожидаемое текущее значение. Если не совпало, изменение отклоняется. Для apply не поддерживается.",
+            "type": "string"
+          },
+          "expected_revision": {
+            "description": "Ожидаемая ревизия MCP-изменений настроек. При несовпадении возвращается REVISION_MISMATCH.",
+            "type": "integer"
+          },
+          "file_path": {
+            "description": "Путь к файлу VAParams для action=apply. Взаимоисключающий с parameters_json.",
+            "type": "string"
+          },
+          "format": {
+            "description": "Формат ответа: markdown (по умолчанию) или json.",
+            "type": "string"
+          },
+          "key": {
+            "description": "Ключ настройки для action=set.",
+            "type": "string"
+          },
+          "parameters_json": {
+            "description": "Строка JSON с VAParams для action=apply. Взаимоисключающая с file_path.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Путь настройки для action=set, например ОтчетAllure.КаталогВыгрузкиAllure.",
+            "type": "string"
+          },
+          "preserve_ci_flags": {
+            "description": "Для action=apply: true — не сбрасывать CI-флаги после применения. По умолчанию false.",
+            "type": "boolean"
+          },
+          "value": {
+            "description": "Новое значение для action=set. Логические: true/false. Числа: строкой. Перечисления и списки: значение или представление. Пустая строка допустима.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "manage_command_interface",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Действие: 'get_section_panel' (получить панель разделов), 'get_function_panel' (получить панель функций), 'click_section_panel' (нажать кнопку панели разделов), 'click_function_panel' (нажать кнопку панели функций), 'close_function_panel' (закрыть панель функций), 'get_all' (получить весь командный интерфейс - панель разделов и для каждой кнопки панель функций). Обязательный параметр.",
+            "type": "string"
+          },
+          "command": {
+            "description": "Имя команды (кнопки) для нажатия. Обязательный параметр для действий click_section_panel и click_function_panel.",
+            "type": "string"
+          },
+          "group": {
+            "description": "Имя группы команды в панели функций. Необязательный. Для действия click_function_panel: имя группы, если команды не уникальны. Для действий get_function_panel и click_section_panel: имя группы панели функций (например, 'Отчёты', 'Создать') - если задан, возвращаются команды только этой группы.",
+            "type": "string"
+          },
+          "returnFunctionPanel": {
+            "description": "Если true, то после нажатия кнопки раздела будет возвращено содержимое панели функций. При этом панель разделов после чтения данных будет возвращена в предыдущее состояние. По умолчанию false. Используется для действия click_section_panel.",
+            "type": "boolean"
+          },
+          "returnLinks": {
+            "description": "Для действий click_section_panel (returnFunctionPanel), get_function_panel и get_all: true - вернуть навигационные ссылки команд. По умолчанию ложь - возвращаются только имена команд по группам; ссылки можно запросить повторным вызовом.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_process_list_os",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "description": "Отбор процессов: часть имени процесса, командной строки или PID, либо выражение с масками, где * — произвольный набор символов (например *1C*). Маска проверяется на полное совпадение строки, поэтому для поиска по части строки оборачивайте выражение в * с обеих сторон. Без учёта регистра. Необязательный.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Максимальное количество процессов в ответе. 0 — вернуть все. По умолчанию 100.",
+            "type": "number"
+          },
+          "only_1c": {
+            "description": "Если true — вернуть только процессы 1С. По умолчанию false (все процессы ОС).",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "select_scenario",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "Имя сценария. Обязательный параметр.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "open_feature_file",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "description": "Путь к .feature файлу. Если не указан — перезагружается файл активной редактируемой вкладки.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_form_element_data",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "element_name": {
+            "description": "Имя элемента формы для получения данных. Обязательный параметр.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_event_log_test_client",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "application": {
+            "description": "Имя приложения; несколько значений - через '|'.",
+            "type": "string"
+          },
+          "columns": {
+            "description": "Колонки ответа через '|'; доступные имена, значение 'all' и умолчание - в описании get_event_log_manager. Неизвестное имя - ошибка INVALID_PARAMS.",
+            "type": "string"
+          },
+          "comment": {
+            "description": "Комментарий события; несколько значений через '|' не поддерживается - передавайте один комментарий.",
+            "type": "string"
+          },
+          "comment_match_type": {
+            "description": "Как сравнивать comment: 'exact' (по умолчанию), 'partial', 'starts_with' (подробнее - у get_event_log_manager).",
+            "type": "string"
+          },
+          "computer": {
+            "description": "Компьютер; несколько значений - через '|'.",
+            "type": "string"
+          },
+          "data": {
+            "description": "Ссылка в колонке \"Данные\": навигационная ссылка вида e1cib/data/... либо строка ЗначениеВСтрокуВнутр.",
+            "type": "string"
+          },
+          "data_max_length": {
+            "description": "Обрезка значения колонки data в символах (по умолчанию 300, 0 - без обрезки).",
+            "type": "number"
+          },
+          "data_presentation": {
+            "description": "Представление данных (колонка \"ПредставлениеДанных\").",
+            "type": "string"
+          },
+          "date_end": {
+            "description": "Конец периода (включая указанную секунду); форматы даты и умолчание - как у get_event_log_manager.",
+            "type": "string"
+          },
+          "date_start": {
+            "description": "Начало периода; форматы даты и умолчание - как у get_event_log_manager.",
+            "type": "string"
+          },
+          "display_order": {
+            "description": "Порядок вывода строк: 'desc' (по умолчанию, от новых к старым) или 'asc'; на состав выборки не влияет.",
+            "type": "string"
+          },
+          "event": {
+            "description": "Событие: системное имя (например, _$Data$_.Update) или представление; несколько значений - через '|'. По умолчанию - все события.",
+            "type": "string"
+          },
+          "event_match_type": {
+            "description": "Как сравнивать event: 'exact' (по умолчанию), 'partial', 'starts_with' (подробнее - у get_event_log_manager).",
+            "type": "string"
+          },
+          "level": {
+            "description": "Уровень: Информация, Ошибка, Предупреждение, Примечание (или Information, Error, Warning, Note); несколько значений - через '|'.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Сколько строк вернуть (по умолчанию 100, максимум 1000; 0 недопустимо) - самые свежие события, удовлетворяющие отбору.",
+            "type": "number"
+          },
+          "metadata": {
+            "description": "Полное имя объекта метаданных на языке целевой базы; несколько значений - через '|'. Неизвестное имя - ошибка ACTION_FAILED.",
+            "type": "string"
+          },
+          "output_file": {
+            "description": "Путь к файлу полного ответа (markdown или json); в ответе MCP остаются шапка со счётчиками, путь, размер и превью.",
+            "type": "string"
+          },
+          "output_format": {
+            "description": "Формат ответа и файла: 'markdown' (по умолчанию) или 'json'. Формат 'json' требует output_file.",
+            "type": "string"
+          },
+          "port": {
+            "description": "Номер основного IP-порта рабочего процесса; несколько значений - через '|'.",
+            "type": "integer"
+          },
+          "scan_limit": {
+            "description": "Бюджет сканирования журнала (по умолчанию 1000, максимум 20000); подробнее - у get_event_log_manager.",
+            "type": "number"
+          },
+          "server": {
+            "description": "Рабочий сервер; несколько значений - через '|'.",
+            "type": "string"
+          },
+          "session": {
+            "description": "Номер сеанса; несколько значений - через '|'.",
+            "type": "integer"
+          },
+          "sync_port": {
+            "description": "Номер вспомогательного IP-порта рабочего процесса; несколько значений - через '|'.",
+            "type": "integer"
+          },
+          "transaction": {
+            "description": "Идентификатор транзакции; несколько значений - через '|'.",
+            "type": "string"
+          },
+          "transaction_status": {
+            "description": "Статус транзакции: Зафиксирована, Отменена, НеЗавершена, НетТранзакции (или Committed, RolledBack, Unfinished, NotApplicable); несколько значений - через '|'.",
+            "type": "string"
+          },
+          "user": {
+            "description": "Пользователь (имя пользователя информационной базы); несколько значений - через '|'.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "speak_text",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "no_play": {
+            "description": "Если true, синтезировать текст и сохранить озвучку в кеш, но не воспроизводить. Необязательный.",
+            "type": "boolean"
+          },
+          "text": {
+            "description": "Массив фраз для синтеза. При no_play=false — ровно одна фраза; при no_play=true — до 100 фраз: до 10 синхронно, 11-100 пакетно с прогрессом. Каждый элемент — строка до 500 символов; суммарная длина — до 5000 символов при синхронном синтезе и до 50000 в пакете.",
+            "type": "array"
+          },
+          "wait": {
+            "description": "Если true, ответ вернуть после окончания воспроизведения фразы. Действует только при no_play=false; по умолчанию false. Необязательный.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "user_actions_recording",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Действие: 'start', 'stop', 'status', 'get_result', 'clear'. Обязательный параметр.",
+            "type": "string"
+          },
+          "capture_id": {
+            "description": "Необязательный идентификатор захвата для 'get_result' и 'clear'. Если он не совпадает с актуальным, 'get_result' возвращает только метаданные актуального результата, а 'clear' ничего не очищает.",
+            "type": "number"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "manage_variables",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Действие: 'get' (по умолчанию), 'set', 'delete'.",
+            "type": "string"
+          },
+          "is_global": {
+            "description": "Флаг, является ли переменная глобальной. Значение по умолчанию - false. Для get и delete определяет, какой контекст использовать.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Имя переменной. Обязательно для action='set' и action='delete' (проверяется на стороне сервера).",
+            "type": "string"
+          },
+          "value": {
+            "description": "Значение переменной. Обязательно для action='set' (проверяется на стороне сервера). Пустая строка — допустимое значение.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_window_list_os",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "manage_uiautomation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Действие: 'find_elements', 'get_element', 'get_children', 'get_parent', 'get_next', 'get_active', 'click', 'input_text', 'press_keys', 'mouse_wheel', 'move_cursor', 'effect'. Обязательный параметр.",
+            "type": "string"
+          },
+          "background": {
+            "description": "Цвет фона балуна (число). По умолчанию 15793151.",
+            "type": "number"
+          },
+          "click_type": {
+            "description": "Тип клика для 'click': 'left' (по умолчанию), 'right', 'double'.",
+            "type": "string"
+          },
+          "color": {
+            "description": "Цвет эффекта: число (BGR) или имя цвета, например 'Красный'. По умолчанию — зелёный цвет VA (для балуна — собственный цвет по умолчанию).",
+            "type": "string"
+          },
+          "control_type": {
+            "description": "Тип элемента (ControlType): 'Button', 'Text', 'Edit', 'ComboBox', 'Document', 'Pane', 'TabItem', 'MenuItem', 'CheckBox', 'RadioButton', 'Hyperlink', 'ListItem', 'Custom', 'Group' и др.; для 'get_children' - отбор по вхождению без учёта регистра.",
+            "type": "string"
+          },
+          "delay": {
+            "description": "Задержка между символами при вводе текста в миллисекундах. По умолчанию 100.",
+            "type": "number"
+          },
+          "direction": {
+            "description": "Направление вращения колеса мыши для 'mouse_wheel': 'forward' (вперёд) или 'back' (назад). Обязательный параметр для этого действия.",
+            "type": "string"
+          },
+          "duration": {
+            "description": "Длительность показа эффекта в миллисекундах. По умолчанию 4000.",
+            "type": "number"
+          },
+          "effect_type": {
+            "description": "Тип эффекта для 'effect': 'dim' (затемнение вокруг области), 'frame' (рамка), 'ellipse' (эллипс), 'arrow' (стрелка от центра экрана к области), 'balloon' (подсказка-балун с текстом). Обязательный параметр для этого действия.",
+            "type": "string"
+          },
+          "element_id": {
+            "description": "Id элемента из результата 'find_elements'; обязателен для 'get_element', 'get_children', 'get_parent', 'get_next', 'click'; необязателен для 'input_text', 'move_cursor', 'effect'; не используется 'press_keys' (сочетание посылается активному окну ОС, а не элементу).",
+            "type": "string"
+          },
+          "font_color": {
+            "description": "Цвет шрифта для текста балуна или надписи (число). По умолчанию 0.",
+            "type": "number"
+          },
+          "font_name": {
+            "description": "Имя шрифта текста. Для балуна по умолчанию 'Calibri'.",
+            "type": "string"
+          },
+          "font_size": {
+            "description": "Размер шрифта текста. Для балуна по умолчанию 12.",
+            "type": "number"
+          },
+          "frame_delay": {
+            "description": "Задержка отрисовки рамки в миллисекундах (frameDelay). По умолчанию 20.",
+            "type": "number"
+          },
+          "height": {
+            "description": "Высота области эффекта, если не указан element_id. По умолчанию 0.",
+            "type": "number"
+          },
+          "help_text": {
+            "description": "Отбор по подсказке элемента (HelpText).",
+            "type": "string"
+          },
+          "keys": {
+            "description": "Сочетание клавиш для 'press_keys' (например, 'Ctrl+S', 'ENTER', 'Alt+F4') - посылается активному окну ОС, перед вызовом активизируйте окно-приёмник через activate_process_os; для 'mouse_wheel' - клавиши-модификаторы (например 'Ctrl'). Обязателен для 'press_keys'.",
+            "type": "string"
+          },
+          "left": {
+            "description": "Левая координата области эффекта, если не указан element_id; для 'balloon' и 'arrow' - точка привязки.",
+            "type": "number"
+          },
+          "limit": {
+            "description": "Максимальное количество элементов в ответе. 0 — вернуть все. По умолчанию 100.",
+            "type": "number"
+          },
+          "name": {
+            "description": "Наименование элемента (точное совпадение) - для 'find_elements'; для 'get_children' - отбор по вхождению без учёта регистра.",
+            "type": "string"
+          },
+          "pid": {
+            "description": "Процесс для поиска (число PID из get_process_list_os, имя клиента тестирования, 'ЭтотСеанс' или 'ЭтотПроцесс' - сам сеанс Vanessa Automation); обязателен для 'find_elements'; для 'get_active' - проверка, что активный элемент принадлежит этому процессу.",
+            "type": "string"
+          },
+          "radius": {
+            "description": "Радиус скругления углов балуна. По умолчанию 5.",
+            "type": "number"
+          },
+          "text": {
+            "description": "Текст подсказки для 'balloon' (обязателен) или надпись для 'dim'; 'frame', 'ellipse' и 'arrow' надпись не поддерживают.",
+            "type": "string"
+          },
+          "thickness": {
+            "description": "Толщина линий эффекта. По умолчанию 6 (для балуна 4).",
+            "type": "number"
+          },
+          "top": {
+            "description": "Верхняя координата области эффекта, если не указан element_id.",
+            "type": "number"
+          },
+          "transparency": {
+            "description": "Прозрачность эффекта. По умолчанию 127.",
+            "type": "number"
+          },
+          "value": {
+            "description": "Текст для 'input_text'. Обязательный параметр для этого действия.",
+            "type": "string"
+          },
+          "width": {
+            "description": "Ширина области эффекта, если не указан element_id. По умолчанию 0.",
+            "type": "number"
+          },
+          "window_title": {
+            "description": "Отбор найденных элементов по заголовку окна (вхождение, без учёта регистра).",
+            "type": "string"
+          },
+          "x": {
+            "description": "Координата X для 'move_cursor' (если не указан element_id).",
+            "type": "number"
+          },
+          "y": {
+            "description": "Координата Y для 'move_cursor' (если не указан element_id).",
+            "type": "number"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "activate_process_os",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "pid": {
+            "description": "PID процесса (положительное число), главное окно которого нужно активизировать. Взаимоисключающий с window_title: передать нужно только один из параметров. Необязательный.",
+            "type": "number"
+          },
+          "window_title": {
+            "description": "Заголовок или часть заголовка окна для поиска процесса; поддерживаются маски с *, например *Блокнот*. Поиск без учёта регистра. Взаимоисключающий с pid: передать нужно только один из параметров. Необязательный.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_form_element_steps",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "element_name": {
+            "description": "Внутреннее имя элемента формы. Если не указан, используется активный элемент. Пустая строка не допускается.",
+            "type": "string"
+          },
+          "mode": {
+            "description": "Режим: 'suggestions' - подсказки-шаги, 'checks' - Gherkin-проверки элемента. Обязательный параметр.",
+            "type": "string"
+          },
+          "table_name": {
+            "description": "Имя или заголовок таблицы: проверяет, что элемент-колонка принадлежит этой таблице. Для поля шапки не указывайте: будет ошибка.",
+            "type": "string"
+          },
+          "table_scope": {
+            "description": "Для mode='checks' и таблицы/колонки: 'current' (по умолчанию) - текущая строка/ячейка, 'all' - вся таблица.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "input_text_to_active_field",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "activate_window": {
+            "description": "Если true, перед вводом активизировать окно: заданное параметрами pid или window_title, а если они не переданы - главное окно текущего клиента тестирования. По умолчанию false - текст вводится в текущее активное поле. Необязательный.",
+            "type": "boolean"
+          },
+          "delay": {
+            "description": "Задержка между символами в миллисекундах, от 0 до 5000. По умолчанию 100, это примерно 10 символов в секунду. Длина текста, умноженная на задержку, не должна быть больше 45000. Необязательный.",
+            "type": "number"
+          },
+          "pid": {
+            "description": "PID процесса, главное окно которого нужно активизировать перед вводом. Используется только вместе с activate_window=true. Взаимоисключающий с window_title. Необязательный.",
+            "type": "number"
+          },
+          "text": {
+            "description": "Текст для ввода. Обязательный параметр. Максимум 1000 символов.",
+            "type": "string"
+          },
+          "window_title": {
+            "description": "Заголовок или часть заголовка окна, которое нужно активизировать перед вводом. Поддерживаются маски с *, например *Блокнот*; маска проверяется на полное совпадение строки, поэтому для поиска по части строки оборачивайте выражение в * с обеих сторон. Поиск без учёта регистра. Используется только вместе с activate_window=true. Взаимоисключающий с pid. Необязательный.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

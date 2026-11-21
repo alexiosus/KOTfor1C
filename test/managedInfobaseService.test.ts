@@ -1,8 +1,10 @@
+import path from 'node:path';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ActiveYamlParametersProfile } from '../src/activeYamlParametersProfile';
 import type { ManagedInfobaseRecord } from '../src/infobaseManager';
 import { ManagedInfobaseService } from '../src/managedInfobaseService';
+import { normalizeInfobaseConnectionIdentity } from '../src/oneCInfobaseConnection';
 
 interface Disposable {
     dispose(): void;
@@ -49,7 +51,7 @@ function createHarness(
     const service = new ManagedInfobaseService({
         loadActiveProfile: async () => currentProfile,
         onDidChangeActiveProfile: profileChanges.event,
-        workspaceRootPath: '/workspace',
+        workspaceRootPath: path.resolve("/workspace"),
         collect: async activeProfileInfobasePath => {
             collectorCalls += 1;
             collectedPaths.push(activeProfileInfobasePath);
@@ -82,7 +84,7 @@ test('stays lazy and coalesces concurrent ensure calls into one collection', asy
     assert.strictEqual(firstSnapshot, secondSnapshot);
     assert.strictEqual(await harness.service.ensureReady(), firstSnapshot);
     assert.equal(harness.collectorCalls, 1);
-    assert.deepEqual(harness.collectedPaths, ['/workspace/runtime/one']);
+    assert.deepEqual(harness.collectedPaths, [path.resolve("/workspace/runtime/one")]);
 });
 
 test('explicit refresh recollects once and publishes a new revision', async () => {
@@ -113,10 +115,10 @@ test('active-profile changes invalidate without collecting until the next consum
     const next = await harness.service.ensureReady();
     assert.equal(harness.collectorCalls, 2);
     assert.equal(next.profileId, 'two');
-    assert.equal(next.activeInfobaseIdentity, '/workspace/runtime/two');
+    assert.equal(next.activeInfobaseIdentity, normalizeInfobaseConnectionIdentity(path.resolve("/workspace/runtime/two")));
     assert.deepEqual(harness.collectedPaths, [
-        '/workspace/runtime/one',
-        '/workspace/runtime/two'
+        path.resolve("/workspace/runtime/one"),
+        path.resolve("/workspace/runtime/two")
     ]);
 });
 

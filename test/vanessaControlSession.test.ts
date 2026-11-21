@@ -10,6 +10,30 @@ import { prepareVanessaResultSources } from '../src/vanessaControlStepSources';
 
 const tools = JSON.parse(fs.readFileSync('test/fixtures/vanessa-control/1.2.043.45/tools.json', 'utf8')).tools;
 
+for (const version of ['1.2.043.45', '1.2.043.47']) {
+    test(`MXL opening through ${version} uses a text step without loading another feature and requires its own result`, async t => {
+        const path = await import('node:path'); const os = await import('node:os');
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-mxl-session-')); t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+        const resultPath = path.join(directory, 'result.json'); let acknowledge = false;
+        const wire = fake(async (name, args) => {
+            if (name === 'execute_step_from_text') {
+                assert.ok(String(args.stepText).startsWith('И я выполняю код встроенного языка\n'));
+                if (acknowledge) { fs.writeFileSync(resultPath, '{"opened":true}'); }
+                return { content: [{ type: 'text', text: 'Шаг выполнен успешно' }] };
+            }
+            return state();
+        });
+        wire.listTools = async () => JSON.parse(fs.readFileSync(`test/fixtures/vanessa-control/${version}/tools.json`, 'utf8')).tools;
+        const session = new VanessaControlSession(); await session.attach(wire, 'http://localhost:9876');
+        await assert.rejects(session.openMxlFile('C:\\Макет.mxl', resultPath), /confirm/u);
+        assert.equal(session.snapshot.status, 'ready'); acknowledge = true;
+        await session.openMxlFile('C:\\Макет.mxl', resultPath);
+        assert.equal(session.snapshot.status, 'ready'); assert.equal(session.snapshot.execution, undefined);
+        assert.ok(!wire.calls.some(name => ['open_feature_file', 'execute_feature_step', 'load_features', 'select_step'].includes(name)));
+        await session.detach();
+    });
+}
+
 test('in-flight requests expose a safe tool label until completion, without request arguments', async () => {
     const session = new VanessaControlSession(); let hold = false; let release!: () => void; let started!: () => void;
     const beginning = new Promise<void>(resolve => { started = resolve; });
@@ -18,7 +42,47 @@ test('in-flight requests expose a safe tool label until completion, without requ
     await session.attach(wire, 'http://localhost:9876'); hold = true;
     const pending = session.refreshState(); await beginning;
     assert.equal((session.snapshot as any).request?.tool, 'get_vanessa_automation_state');
+    assert.equal(session.snapshot.request?.background, true);
     release(); await pending; assert.equal((session.snapshot as any).request, undefined); await session.detach();
+});
+
+test('client list polling is marked as background without hiding the request from session observers', async () => {
+    const pending = deferred<{ content: Array<{ type: 'text'; text: string }> }>(); const started = deferred<void>();
+    const wire = fake(async name => {
+        if (name === 'manage_test_client_profiles') { started.resolve(); return pending.promise; }
+        return state();
+    });
+    const session = new VanessaControlSession(); await session.attach(wire, 'http://localhost:9876');
+    const reading = session.withTestClientControl(clients => clients.list()); await started.promise;
+    assert.deepEqual(session.snapshot.request, { tool: 'manage_test_client_profiles', count: 1, background: true });
+    pending.resolve({ content: [{ type: 'text', text: '# Список профилей клиентов тестирования\n\nПрофили не настроены. Добавьте профиль на вкладке \'Клиенты тестирования\' в настройках VA.' }] });
+    assert.deepEqual(await reading, []); assert.equal(session.snapshot.request, undefined); await session.detach();
+});
+
+test('recording status polling cannot replace foreground recording progress', async () => {
+    const stopped = deferred<ReturnType<typeof state>>(); const stopStarted = deferred<void>();
+    const status = deferred<ReturnType<typeof state>>(); const statusStarted = deferred<void>();
+    const recordingStatus = { content: [{ type: 'text' as const, text: '# Результат записи действий пользователя\n\n- Запись идёт: Нет\n- Есть завершённый результат: Нет\n' }] };
+    let holdStatus = false;
+    const wire = fake(async (name, args) => {
+        if (name === 'user_actions_recording') {
+            if (args.action === 'stop') { stopStarted.resolve(); return stopped.promise; }
+            if (holdStatus) { statusStarted.resolve(); return status.promise; }
+            return recordingStatus;
+        }
+        return state();
+    });
+    wire.listTools = async () => JSON.parse(fs.readFileSync('test/fixtures/vanessa-control/1.2.043.47/tools.json', 'utf8')).tools;
+    const session = new VanessaControlSession(); await session.attach(wire, 'http://localhost:9876');
+    const stopping = session.runFormTool('user_actions_recording', { action: 'stop' }); await stopStarted.promise;
+    holdStatus = true;
+    const polling = session.refreshState(); await statusStarted.promise;
+    assert.deepEqual(session.snapshot.request, { tool: 'user_actions_recording', count: 2, background: false });
+    stopped.resolve(recordingStatus);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(session.snapshot.request, { tool: 'user_actions_recording', count: 1, background: true });
+    status.resolve(recordingStatus); await Promise.all([stopping, polling]);
+    assert.equal(session.snapshot.status, 'ready'); assert.equal(session.snapshot.request, undefined); await session.detach();
 });
 const state = (running = false) => ({ content: [{ type: 'text' as const, text: fs.readFileSync('test/fixtures/vanessa-control/1.2.043.45/state-running.ru.md', 'utf8').replace('Выполнение сценариев: да', `Выполнение сценариев: ${running ? 'да' : 'нет'}`) }] });
 const capturedReply = (name: string) => ({ content: [{ type: 'text' as const, text: fs.readFileSync(`test/fixtures/vanessa-control/1.2.043.45/${name}`, 'utf8') }] });
@@ -697,6 +761,78 @@ test('confirmed idle Broken after Stop cancels only the pending run request and 
     await session.refreshState();
     await session.select('C:\\Tests\\sales.feature', 14);
 });
+
+for (const mode of ['runFeature', 'runFromLine'] as const) {
+for (const rejection of ['modal dialog', 'syntax preflight']) {
+test(`a rejected .47 ${mode} cannot adopt a previous failure with the same runId: ${rejection}`, async () => {
+    const file = 'C:\\Tests\\own.feature';
+    const json = (data: Record<string, unknown>) => ({ content:[{type:'text' as const,text:JSON.stringify({schemaVersion:'1.1',...data})}] });
+    const wire = fake(async name => {
+        if (name === 'run_scenario') { return {isError:true,content:[{type:'text',text: rejection === 'modal dialog'
+            ? 'ACTION_FAILED: Cannot start while a modal dialog is open.'
+            : 'ACTION_FAILED: Обнаружены ошибки проверки синтаксиса файла: known edited step.'}]}; }
+        if (name === 'get_test_results') { return json({ok:true,isRunning:false,isComplete:true,runId:'previous',status:'failed',featurePath:file,failedStep:{lineNumber:8},steps:[{lineNumber:8,status:'failed'}],error:{message:'Previous failure'}}); }
+        if (name === 'get_vanessa_automation_state') { return json({ok:true,isRunning:false,runId:'previous',currentFeature:{fullPath:file},currentStep:{lineNumber:8,status:'failed'}}); }
+        return {content:[]};
+    });
+    wire.listTools = async () => JSON.parse(fs.readFileSync('test/fixtures/vanessa-control/1.2.043.47/tools.live.json','utf8')).tools;
+    const session = new VanessaControlSession();await session.attach(wire,'http://localhost:9876');
+    await assert.rejects(session.run(mode,file,8), rejection === 'modal dialog' ? /modal dialog/ : /синтаксиса/);
+    assert.equal(wire.calls.filter(name => name === 'run_scenario').length, 1, 'a rejected launch is never automatically replayed');
+    assert.equal(session.snapshot.execution?.status,'unknown');assert.equal(session.failure,undefined);
+    assert.equal(session.snapshot.runActive,false);assert.equal(wire.closes,0);
+});
+}
+}
+
+for (const mismatch of ['none', 'fresh', 'unobserved', 'old run', 'other results', 'other feature'] as const) {
+test(`a pending .47 run settles only on its own complete failure: ${mismatch}`, async () => {
+    const file = 'C:\\Tests\\own.feature';
+    const json = (data: Record<string, unknown>) => ({ content: [{ type: 'text' as const, text: JSON.stringify({ schemaVersion: '1.1', ...data }) }] });
+    let running = false; let started = false; let runId = 'owned'; let resultRunId = 'owned'; let observedFile = file;
+    let runSignal: AbortSignal | undefined;
+    const beginning = deferred<void>();
+    const wire = fake(async (name, _args, signal) => {
+        if (name === 'run_scenario') {
+            runSignal = signal; started = true; beginning.resolve();
+            return new Promise((_resolve, reject) => signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }));
+        }
+        if (name === 'get_vanessa_automation_state') {
+            return json({ ok: true, isRunning: running, runId, currentFeature: { fullPath: observedFile },
+                currentStep: { lineNumber: running ? 3 : 8, status: running ? 'running' : 'failed' } });
+        }
+        if (name === 'get_test_results') {
+            if (!started) { return json({ ok: false, runId: mismatch === 'fresh' ? '' : 'previous', isRunning: false }); }
+            return json({ ok: true, runId: resultRunId, isRunning: false, isComplete: true, status: 'failed', featurePath: file,
+                failedStep: { lineNumber: 8 }, steps: [{ lineNumber: 8, status: 'failed' }], error: { message: 'Hidden control' } });
+        }
+        return { content: [] };
+    });
+    wire.listTools = async () => JSON.parse(fs.readFileSync('test/fixtures/vanessa-control/1.2.043.47/tools.live.json', 'utf8')).tools;
+    const session = new VanessaControlSession(); await session.attach(wire, 'http://localhost:9876');
+    const executing = session.run('runFeature', file, 1); await beginning.promise;
+    if (mismatch === 'old run') { runId = 'previous'; }
+    if (mismatch !== 'unobserved') { running = true; await session.refreshState(); }
+    if (mismatch === 'other results') { resultRunId = 'foreign'; }
+    if (mismatch === 'other feature') { observedFile = 'C:\\Tests\\foreign.feature'; }
+    running = false; await session.refreshState();
+    assert.equal(runSignal?.aborted, mismatch === 'none' || mismatch === 'fresh');
+    if (mismatch !== 'none' && mismatch !== 'fresh') {
+        assert.equal(session.snapshot.runActive, true, 'unrelated evidence must not release the pending run');
+        runId = resultRunId = 'owned'; observedFile = file;
+        running = true; await session.refreshState(); running = false; await session.refreshState();
+    }
+    await executing;
+    assert.equal(session.snapshot.execution?.status, 'failed');
+    assert.equal(session.snapshot.execution?.currentLineNumber, 8);
+    assert.equal(session.failure?.message, 'Hidden control');
+    assert.equal(session.snapshot.runActive, false);
+    assert.equal(session.snapshot.status, 'ready');
+    await session.withTestClientControl(async () => undefined);
+    assert.equal(wire.closes, 0, 'the shared MCP connection remains usable');
+    await session.detach();
+});
+}
 
 test('short failures are reconciled against source-bound history, while unrelated history remains unknown', async () => {
     const history = fs.readFileSync('test/fixtures/vanessa-control/1.2.043.45/results-failed.live.ru.md', 'utf8');

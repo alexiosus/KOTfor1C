@@ -418,6 +418,69 @@ body {
     width: 100%;
 }
 
+.param-path-value {
+    position: relative;
+    min-width: 0;
+}
+
+.param-path-value > .param-value,
+.param-path-value > .kot-control {
+    width: 100%;
+    min-width: 0;
+}
+
+.browse-path-btn {
+    position: absolute;
+    right: 3px;
+    top: 3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    color: var(--vscode-icon-foreground, var(--vscode-foreground));
+    background: var(--vscode-input-background);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.param-path-value:hover .browse-path-btn,
+.param-path-value:focus-within .browse-path-btn {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.param-path-value:hover input.param-value,
+.param-path-value:focus-within input.param-value,
+.param-path-value:hover textarea.param-value,
+.param-path-value:focus-within textarea.param-value {
+    padding-right: 32px;
+}
+
+.param-path-value:hover .kot-control-preview,
+.param-path-value:focus-within .kot-control-preview {
+    right: 30px;
+}
+
+.browse-path-btn:hover {
+    background: var(--vscode-toolbar-hoverBackground);
+}
+
+.browse-path-btn:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+}
+
+@media (hover: none) {
+    .param-path-value .browse-path-btn { opacity: 1; pointer-events: auto; }
+    .param-path-value input.param-value { padding-right: 32px; }
+    .param-path-value .kot-control-preview { right: 30px; }
+}
+
 .param-hint {
     display: inline-flex;
     align-items: center;

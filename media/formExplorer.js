@@ -453,6 +453,7 @@
             }
 
             const action = String(target.dataset.action || '');
+            if (action === 'native-element-checks') { post('elementChecks'); return; }
             if (action === 'select-element') {
                 overflowMenuOpen = false;
                 renderOverflowMenu();
@@ -1444,7 +1445,8 @@
         return renderSectionCard(
             viewState.liveSource === 'mcp' ? t('nativeSteps', 'Vanessa steps') : t('suggestedSteps', 'Suggested steps'),
             viewState.liveSource === 'mcp'
-                ? nativeBody
+                ? nativeBody + (viewState.elementChecksAvailable && selectedElement?.name
+                    ? `<button class="ghost-btn small" type="button" data-action="native-element-checks">${escapeHtml(t('nativeElementChecks', 'Get checks for this element'))}</button>` : '')
                 : renderSuggestedStepsBody(selectedElement),
             {
                 collapsible: true,

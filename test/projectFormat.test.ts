@@ -1,3 +1,4 @@
+import { createTestLink } from './helpers/symlinks';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -8,7 +9,7 @@ import { projectFormat, assertProjectFormat3, projectFormatFile } from '../src/p
 import { ProjectLibraryStore } from '../src/projectLibraryStore';
 import { completeProjectSetup } from '../src/projectSetupGate';
 async function fixture(t: test.TestContext) {
-    const root=await fs.mkdtemp(path.join(os.tmpdir(),'kot-format-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),'kot-format-'));t.after(()=>fs.rm(root,{recursive:true,force:true,maxRetries:5,retryDelay:100}));
     return { root, marker:projectFormatFile(root), enable:async()=>{await fs.mkdir(path.join(root,'.kot'),{recursive:true});await fs.writeFile(projectFormatFile(root),'version: 3\n');} };
 }
 test('project mode is durable, isolated by root and re-read after a branch switch',async t=>{
@@ -22,7 +23,7 @@ test('invalid, conflicted and symlinked format files cannot enable writes',async
     for(const text of ['version: 4\n','<<<<<<< HEAD\nversion: 3\n=======\n>>>>>>> old\n','version: 3\nunknown: true\n','version: &v 3\nother: *v\n']){
         await fs.writeFile(f.marker,text);assert.equal(projectFormat(f.root).kind,'invalid');assert.throws(()=>assertProjectFormat3(f.root));
     }
-    await fs.unlink(f.marker);const other=path.join(f.root,'elsewhere.yml');await fs.writeFile(other,'version: 3\n');await fs.symlink(other,f.marker);
+    await fs.unlink(f.marker);const other=path.join(f.root,'elsewhere.yml');await fs.writeFile(other,'version: 3\n');if (!await createTestLink(t, other, f.marker)) { return; }
     assert.equal(projectFormat(f.root).kind,'invalid');assert.throws(()=>assertProjectFormat3(f.root));
 });
 test('legacy discovery ignores leftover v3 metadata and preserves original bytes without writes',async t=>{
@@ -41,7 +42,7 @@ test('a branch change after validation blocks prepared metadata writes',async t=
 });
 
 test('native conversion stays blocked in an old branch even when requested explicitly',async t=>{
-    const f=await fixture(t);const source=path.join(f.root,'scen.yaml');const original='ТипФайла: Сценарий\nДанныеСценария:\n    UID: old\nТекстСценария: |\n    And Step\n';await fs.writeFile(source,original);
+    const f=await fixture(t);await fs.mkdir(path.join(f.root,'.git'));const source=path.join(f.root,'scen.yaml');const original='ТипФайла: Сценарий\nДанныеСценария:\n    UID: old\nТекстСценария: |\n    And Step\n';await fs.writeFile(source,original);
     const {convertSpprScenarioFiles}=await import('../src/spprScenarioFormat');
     await assert.rejects(convertSpprScenarioFiles(source,'native'),/KOT 3|transition/iu);assert.equal(await fs.readFile(source,'utf8'),original);await assert.rejects(fs.stat(path.join(f.root,'meta.yaml')),{code:'ENOENT'});
 });

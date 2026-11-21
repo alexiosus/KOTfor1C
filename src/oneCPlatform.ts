@@ -1,7 +1,10 @@
+import { kotWindow, hasKotInteraction } from './kotInteraction';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { getTranslator, type Translator } from './localization';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 const WINDOWS_1C_INSTALL_ROOTS = [
     'C:\\Program Files\\1cv8',
@@ -193,7 +196,7 @@ function showPlatformConfigurationError(t: Translator, message: string): void {
     const managePlatformsAction = t('Manage platforms');
     const openSettingsAction = t('Open Settings');
 
-    void vscode.window.showErrorMessage(
+    void kotUi.showErrorMessage(
         message,
         managePlatformsAction,
         openSettingsAction
@@ -249,7 +252,7 @@ async function promptForRequiredString(
     validationMessage: string,
     placeHolder?: string
 ): Promise<string | undefined> {
-    const result = await vscode.window.showInputBox({
+    const result = await kotUi.showInputBox({
         prompt,
         value,
         placeHolder,
@@ -321,6 +324,11 @@ async function showPlatformManagerQuickPick(
     t: Translator,
     platforms: readonly ConfiguredOneCPlatform[]
 ): Promise<PlatformManagerQuickPickItem | 'rescan' | undefined> {
+    if (hasKotInteraction?.()) {
+        const picked = await kotUi.showQuickPick([...buildPlatformManagerQuickPickItems(t, platforms),
+            { label: t('Rescan installed platforms'), entryKind: 'rescan' as const }], { title: t('1C platforms'), ignoreFocusOut: true });
+        return picked?.entryKind === 'rescan' ? 'rescan' : picked;
+    }
     return await new Promise<PlatformManagerQuickPickItem | 'rescan' | undefined>(resolve => {
         const quickPick = vscode.window.createQuickPick<PlatformManagerQuickPickItem>();
         const refreshButton: vscode.QuickInputButton = {
@@ -366,19 +374,19 @@ async function rescanInstalledPlatforms(
 ): Promise<ConfiguredOneCPlatform[]> {
     const detectedPlatforms = await detectInstalledOneCPlatforms();
     if (detectedPlatforms.length === 0) {
-        void vscode.window.showInformationMessage(t('No installed 1C platforms were found in standard locations.'));
+        void kotUi.showInformationMessage(t('No installed 1C platforms were found in standard locations.'));
         return [...existingPlatforms];
     }
 
     const mergedPlatforms = mergeDetectedPlatforms(existingPlatforms, detectedPlatforms);
     if (arePlatformsEqual(mergedPlatforms, [...existingPlatforms])) {
-        void vscode.window.showInformationMessage(t('Platform rescan finished. No new platforms were added.'));
+        void kotUi.showInformationMessage(t('Platform rescan finished. No new platforms were added.'));
         return [...existingPlatforms];
     }
 
     const savedPlatforms = await saveConfiguredOneCPlatforms(mergedPlatforms);
     const addedPlatformsCount = Math.max(savedPlatforms.length - existingPlatforms.length, 0);
-    void vscode.window.showInformationMessage(
+    void kotUi.showInformationMessage(
         t('Platform rescan finished. Added {0} new platform(s).', String(addedPlatformsCount))
     );
     return savedPlatforms;
@@ -478,7 +486,7 @@ export async function resolveOneCPlatformForLaunch(
         return configuredPlatforms[0];
     }
 
-    const pickedPlatform = await vscode.window.showQuickPick(
+    const pickedPlatform = await kotUi.showQuickPick(
         configuredPlatforms.map((platform, index) => {
             const detailParts: string[] = [];
             if (index === 0) {
@@ -530,7 +538,7 @@ export async function handleManagePlatforms(context: vscode.ExtensionContext): P
             }
 
             if (findPlatformIndexByPath(platforms, clientExePath) !== -1) {
-                vscode.window.showErrorMessage(t('1C platform with client path "{0}" already exists.', clientExePath));
+                kotUi.showErrorMessage(t('1C platform with client path "{0}" already exists.', clientExePath));
                 continue;
             }
 
@@ -557,7 +565,7 @@ export async function handleManagePlatforms(context: vscode.ExtensionContext): P
         }
 
         const currentPlatform = platforms[currentIndex];
-        const action = await vscode.window.showQuickPick(
+        const action = await kotUi.showQuickPick(
             [
                 {
                     label: t('Set as default'),
@@ -620,7 +628,7 @@ export async function handleManagePlatforms(context: vscode.ExtensionContext): P
 
             const duplicateIndex = findPlatformIndexByPath(platforms, updatedClientPath);
             if (duplicateIndex !== -1 && duplicateIndex !== currentIndex) {
-                vscode.window.showErrorMessage(t('1C platform with client path "{0}" already exists.', updatedClientPath));
+                kotUi.showErrorMessage(t('1C platform with client path "{0}" already exists.', updatedClientPath));
                 continue;
             }
 
@@ -639,7 +647,7 @@ export async function handleManagePlatforms(context: vscode.ExtensionContext): P
         }
 
         if (platforms.length === 1) {
-            vscode.window.showWarningMessage(t('At least one 1C platform must remain in the list.'));
+            kotUi.showWarningMessage(t('At least one 1C platform must remain in the list.'));
             continue;
         }
 

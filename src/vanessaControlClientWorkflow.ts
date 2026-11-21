@@ -10,6 +10,7 @@ interface ClientManagerSnapshot {
     readonly connect: boolean;
     readonly disconnect: boolean;
     readonly close: boolean;
+    readonly port?: boolean;
 }
 export interface VanessaClientManagerPorts {
     snapshot(): ClientManagerSnapshot;
@@ -49,10 +50,10 @@ export async function manageVanessaClients(ports: VanessaClientManagerPorts): Pr
         if (id === undefined) { return; }
         const client = selection.clients.find(value => value.id === id);
         if (!client) { return; }
-        if (!await ports.ui.acknowledgePort(client.name, client.port)) { return; }
+        if (!state.port && !await ports.ui.acknowledgePort(client.name, client.port)) { return; }
         current();
         await ports.run(clients => clients.apply(client, true), state.generation);
-        await ports.ui.info('Supported connection fields applied and verified. The saved port was not applied.');
+        await ports.ui.info(state.port ? 'Connection fields and port applied and verified.' : 'Supported connection fields applied and verified. The saved port was not applied.');
     } else if (action === 'live' && state.read) {
         const profiles = await ports.run(clients => clients.list(), state.generation); current();
         if (!profiles.length) { await ports.ui.info('No client profiles in this Vanessa session.'); return; }

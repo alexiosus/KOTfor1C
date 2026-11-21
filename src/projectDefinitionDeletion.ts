@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -19,6 +20,8 @@ import type { ProjectDefinitionReferenceService } from './projectDefinitionRefer
 import { projectedProjectScenario, projectLibraryEnvironment } from './projectLibraryIntegration';
 import { resolveProjectLibraryRoot } from './projectLibraryMetadata';
 import { parseProjectMetadataSidecar, type ProjectEntityIdentity } from './projectLibraryStore';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 const t = (message: string, ...args: string[]): string => vscode.l10n.t(message, ...args);
 interface DeleteResource { readonly uri: vscode.Uri; readonly recursive: boolean }
@@ -219,7 +222,7 @@ export async function deleteScenarioDefinition(
         return { scenario, resources, source, metadata, fingerprint: await fingerprint(resources) };
     };
     const plan = await prepare();
-    const choice = await vscode.window.showWarningMessage(translate('Delete definition "{0}"?', plan.scenario.name), {
+    const choice = await kotUi.showWarningMessage(translate('Delete definition "{0}"?', plan.scenario.name), {
         modal: true, detail: translate('These files and folders will be moved to the trash:\n{0}', plan.resources.map(item => item.uri.fsPath).join('\n'))
     }, { title: translate('Delete') });
     if (!choice) { return undefined; }
@@ -314,7 +317,7 @@ export async function deleteExportScenario(
         }
     };
     await checkReferences();
-    const choice = await vscode.window.showWarningMessage(t('Delete definition "{0}"?', definition.template), {
+    const choice = await kotUi.showWarningMessage(t('Delete definition "{0}"?', definition.template), {
         modal: true, detail: t('Only the selected scenario block will be removed. Other scenarios in this feature will be kept.')
     }, { title: t('Delete') });
     if (!choice) { return false; }
@@ -346,7 +349,7 @@ export async function deleteStandaloneFeature(uri: vscode.Uri, expectedTitle?: s
         return { source, metadata, resources, title: parsed.feature.title, fingerprint: await fingerprint(resources) };
     };
     const plan = await prepare();
-    const choice = await vscode.window.showWarningMessage(t('Delete definition "{0}"?', plan.title), {
+    const choice = await kotUi.showWarningMessage(t('Delete definition "{0}"?', plan.title), {
         modal: true, detail: t('These files and folders will be moved to the trash:\n{0}', plan.resources.map(resource => resource.uri.fsPath).join('\n'))
     }, { title: t('Delete') });
     if (!choice) { return false; }

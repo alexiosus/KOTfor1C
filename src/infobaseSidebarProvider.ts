@@ -1,10 +1,14 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import { buildInfobaseSidebarModel, type InfobaseSidebarModel } from './infobaseSidebarModel';
 import type { ManagedInfobaseRecord } from './infobaseManager';
 import type { ManagedInfobaseService, ManagedInfobaseSnapshot } from './managedInfobaseService';
 import type { InfobaseRuntimeTrackerLike } from './infobaseRuntimeTracker';
 import type { VanessaInfobaseClients } from './vanessaInfobaseClients';
+import { VanessaClientControlError, formatVanessaClientError } from './vanessaControlClients';
 import type { Translator } from './localization';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 export type InfobaseMaintenanceAction =
     | 'vanessaClients'
@@ -331,7 +335,9 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
                 try {
                     if (!this.services.clients.stateFor(base.infobasePath).connection.ready && message.action !== 'disconnect') { await this.services.connectVanessa?.(); }
                     await this.services.clients.operate(base.infobasePath, [message.clientId], message.action);
-                } catch { await this.view?.webview.postMessage({ command: 'error', message: this.t('The Vanessa client operation was not confirmed. Refresh the client list.'), retainItems: true }); }
+                } catch (error) {
+                    await this.view?.webview.postMessage({ command: 'error', message: error instanceof VanessaClientControlError ? formatVanessaClientError(error, this.t) : this.t('The Vanessa client operation was not confirmed. Refresh the client list.'), retainItems: true });
+                }
                 return;
             }
             case 'ready':
@@ -491,7 +497,7 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
 
     private async postError(error: unknown): Promise<void> {
         const message = errorMessage(error);
-        void vscode.window.showErrorMessage(message);
+        void kotUi.showErrorMessage(message);
         await this.view?.webview.postMessage({ command: 'error', message, retainItems: this.model !== null });
     }
 

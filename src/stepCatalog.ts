@@ -21,6 +21,12 @@ export interface BuiltInStepDefinition {
     readonly categoryPath?: StepCategoryPath;
 }
 
+export function sortStepCatalogDefinitions(steps: readonly BuiltInStepDefinition[]): BuiltInStepDefinition[] {
+    const compare = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0;
+    return [...steps].sort((left, right) => compare(left.ru?.pattern || '', right.ru?.pattern || '')
+        || compare(left.en?.pattern || '', right.en?.pattern || '') || compare(left.id, right.id));
+}
+
 const RUSSIAN_STEP_CATEGORY_DESCRIPTION = 'Категория шагов';
 const ENGLISH_STEP_CATEGORY_DESCRIPTION = 'Steps category';
 
@@ -63,6 +69,7 @@ export interface StepCatalogIndex {
 }
 
 export type ResolvedStepCatalogSource =
+    | 'local'
     | 'versioned-cache'
     | 'versioned-download'
     | 'unavailable';
@@ -207,12 +214,28 @@ export function parseBuiltInStepCatalog(
     const sourceRef = asNonEmptyString(source.ref, 'Step catalog source ref');
     const sourceCommit = assertHash(source.commit, SHA1_REGEX, 'Step catalog source commit');
 
-    if (!Array.isArray(catalog.steps) || catalog.steps.length === 0) {
+    const steps = parseStepCatalogDefinitions(catalog.steps);
+
+    return {
+        schemaVersion: 1,
+        vanessaVersion,
+        generatedAt: assertIsoTimestamp(catalog.generatedAt, 'Step catalog generatedAt'),
+        source: {
+            repository: 'Pr-Mex/vanessa-automation',
+            ref: sourceRef,
+            commit: sourceCommit
+        },
+        steps
+    };
+}
+
+export function parseStepCatalogDefinitions(value: unknown): readonly BuiltInStepDefinition[] {
+    if (!Array.isArray(value) || value.length === 0) {
         throw new Error('Step catalog must contain at least one step.');
     }
 
     const ids = new Set<string>();
-    const steps = catalog.steps.map((rawStep, index): BuiltInStepDefinition => {
+    const steps = value.map((rawStep, index): BuiltInStepDefinition => {
         const step = asRecord(rawStep, `Step catalog step ${index}`);
         const ru = parseStepVariant(step.ru, `Step catalog step ${index}.ru`);
         const en = parseStepVariant(step.en, `Step catalog step ${index}.en`);
@@ -242,17 +265,7 @@ export function parseBuiltInStepCatalog(
         };
     });
 
-    return {
-        schemaVersion: 1,
-        vanessaVersion,
-        generatedAt: assertIsoTimestamp(catalog.generatedAt, 'Step catalog generatedAt'),
-        source: {
-            repository: 'Pr-Mex/vanessa-automation',
-            ref: sourceRef,
-            commit: sourceCommit
-        },
-        steps
-    };
+    return steps;
 }
 
 function assertSafeRelativeCatalogPath(value: unknown): string {

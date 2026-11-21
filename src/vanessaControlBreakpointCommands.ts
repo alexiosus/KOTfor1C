@@ -1,9 +1,12 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import fs from 'node:fs/promises';
 import { isExecutableFeatureLine, prepareSavedVanessaFeature, sameSavedVanessaFeature, type VanessaFeatureDocument } from './vanessaControlFeature';
 import { sameVanessaFeaturePath, type VanessaControlSession } from './vanessaControlSession';
 import { isExecutableYamlControlLine, type VanessaYamlControl } from './vanessaControlYaml';
 import { VanessaBreakpointMarkers, type VanessaGutterLocation } from './vanessaControlBreakpointMarkers';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 /** Separate Vanessa markers leave native debugger breakpoints and keybindings untouched. */
 export function registerVanessaBreakpointCommands(context: vscode.ExtensionContext, session: VanessaControlSession, yamlControl?: VanessaYamlControl,
@@ -65,7 +68,7 @@ export function registerVanessaBreakpointCommands(context: vscode.ExtensionConte
             if (toggle) {
                 const line = (clicked?.line ?? initial.line) + 1;
                 if (lines.includes(line) && !owned.includes(line)) {
-                    void vscode.window.showInformationMessage(vscode.l10n.t('This breakpoint was created in Vanessa. Remove it there; KOT preserves existing session breakpoints.'));
+                    void kotUi.showInformationMessage(vscode.l10n.t('This breakpoint was created in Vanessa. Remove it there; KOT preserves existing session breakpoints.'));
                 } else {
                     const keep = desired ?? !owned.includes(line);
                     await session.synchronizeBreakpoints(saved.filePath, keep ? [...new Set([...owned, line])] : owned.filter(value => value !== line), isCurrent, saved.text);
@@ -73,8 +76,8 @@ export function registerVanessaBreakpointCommands(context: vscode.ExtensionConte
             }
             source = { ...saved, generation: session.snapshot.generation }; update();
             if (!toggle) {
-                if (!lines.length) { void vscode.window.showInformationMessage(vscode.l10n.t('No Vanessa breakpoints in this feature.')); return; }
-                const selected = await vscode.window.showQuickPick(lines.map(line => ({ label: vscode.l10n.t('Line {0}', line), line,
+                if (!lines.length) { void kotUi.showInformationMessage(vscode.l10n.t('No Vanessa breakpoints in this feature.')); return; }
+                const selected = await kotUi.showQuickPick(lines.map(line => ({ label: vscode.l10n.t('Line {0}', line), line,
                     description: owned.includes(line) ? vscode.l10n.t('KOT breakpoint') : vscode.l10n.t('Breakpoint from Vanessa') })), { title: vscode.l10n.t('Vanessa breakpoints') });
                 const editor = vscode.window.activeTextEditor;
                 if (selected && isCurrent() && editor && selected.line <= editor.document.lineCount) {
@@ -82,7 +85,7 @@ export function registerVanessaBreakpointCommands(context: vscode.ExtensionConte
                     editor.revealRange(editor.document.lineAt(selected.line - 1).range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
                 }
             }
-        } catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? vscode.l10n.t(error.message) : vscode.l10n.t('Vanessa MCP command failed.')); }
+        } catch (error) { void kotUi.showErrorMessage(error instanceof Error ? vscode.l10n.t(error.message) : vscode.l10n.t('Vanessa MCP command failed.')); }
         finally { busy = false; update(); }
     };
     context.subscriptions.push(marker, nativeMarkers,

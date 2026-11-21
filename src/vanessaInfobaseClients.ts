@@ -1,19 +1,19 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { normalizeInfobaseConnectionIdentity, normalizeInfobaseReference } from './oneCInfobaseConnection';
 import { getVanessaDebugClientAuthentication, type VanessaDebugClient, type VanessaDebugClientStore } from './vanessaDebugClients';
-import { prepareVanessaClientProfile, sameVanessaClientProfile, VanessaClientControlError, type VanessaClientProfile, type VanessaRuntimeClients } from './vanessaControlClients';
+import { prepareVanessaClientProfile, sameVanessaClientProfile, matchesVanessaClientSettings as settingsMatch, parseVanessaClientLaunchSettings as clientLaunchSettings, VanessaClientControlError, type VanessaClientProfile, type VanessaRuntimeClients } from './vanessaControlClients';
 import type { VanessaControlSnapshot } from './vanessaControlSession';
 
 export interface VanessaInfobaseConnection {
     generation: number; ready: boolean; busy: boolean; read: boolean; write: boolean; connect: boolean; disconnect: boolean;
-    connected?: boolean;
+    connected?: boolean; port?: boolean;
 }
 export function getVanessaInfobaseConnection(snapshot: Pick<VanessaControlSnapshot, 'generation' | 'status' | 'capabilities'>, busy: boolean): VanessaInfobaseConnection {
     const caps = snapshot.capabilities;
     // An unreadable execution state does not detach the MCP session or its clients.
     return { generation: snapshot.generation, ready: snapshot.status === 'ready',
         connected: !!caps && snapshot.status !== 'detached' && snapshot.status !== 'connecting', busy,
-        read: !!caps?.clientProfilesRead.supported, write: !!caps?.clientProfilesWrite.supported,
+        port: !!caps?.clientProfilePort?.supported, read: !!caps?.clientProfilesRead.supported, write: !!caps?.clientProfilesWrite.supported,
         connect: !!caps?.clientConnect.supported, disconnect: !!caps?.clientDisconnect.supported };
 }
 export interface VanessaInfobaseClientPorts {
@@ -31,48 +31,31 @@ export interface VanessaInfobaseClientRow extends VanessaInfobaseClientFields {
     remoteName?: string; replaceable: boolean; active: boolean; portUnsupported: boolean;
     remoteOnly?: boolean;
     remoteClientType?: string;
+    remotePort?: number;
 }
 export interface VanessaInfobaseClientsView {
     connection: VanessaInfobaseConnection; rows: VanessaInfobaseClientRow[]; defaults: VanessaInfobaseClientFields;
     runtimeClients: Array<{ name: string; clientType: string }>;
-    loading: boolean; pendingAction: string | null; error: string | null;
+    loading: boolean; pendingAction: string | null; error: string | null; errorDetails?: string;
 }
 /** Host-only confirmation snapshot. Never serialize this private profile to a webview. */
 export interface VanessaInfobaseReplacement { generation: number; profile: VanessaClientProfile }
-export class VanessaInfobaseClientError extends Error {}
-const error = (message: string) => new VanessaInfobaseClientError(message);
+export class VanessaInfobaseClientError extends VanessaClientControlError {}
+const error = (message: string, details?: string) => new VanessaInfobaseClientError(message, details);
 const sameBase = (left: string, right: string) => normalizeInfobaseConnectionIdentity(left) === normalizeInfobaseConnectionIdentity(right);
 const fold = (value: string) => value.trim().toLocaleLowerCase();
 interface ClientMatch { state: VanessaInfobaseClientState; profile?: VanessaClientProfile; replaceable?: boolean }
-function clientLaunchSettings(connection: string, parameters: string) {
-    const authentication = getVanessaDebugClientAuthentication({ infobase: connection, username: '', password: '' });
-    const other: string[] = [];
-    // Consume whole arguments so /N or /P inside another quoted value stays untouched.
-    for (const token of parameters.match(/(?:[^\s"]+|"(?:[^"]|"")*")+/gu) ?? []) {
-        const match = /^\/([NP])(?:"((?:[^"]|"")*)"|([^\s"]+))$/u.exec(token);
-        if (!match) { other.push(token); continue; }
-        const value = match[2] !== undefined ? match[2].replace(/""/gu, '"') : match[3];
-        if (match[1] === 'N') { authentication.username = value; } else { authentication.password = value; }
-    }
-    return { username: authentication.username ?? '', password: authentication.password ?? '', additionalParameters: other.join(' ') };
-}
-function settingsMatch(client: VanessaDebugClient, row: VanessaClientProfile): boolean {
-    const fields = prepareVanessaClientProfile(client).fields;
-    const expected = clientLaunchSettings(fields.infobase_path, fields.additional_parameters);
-    const actual = clientLaunchSettings(row.connection, row.additionalParameters);
-    return sameBase(row.connection, client.infobase) && row.clientType === fields.client_type && fold(row.computerName) === fold(fields.computer_name) &&
-        actual.username === expected.username && actual.password === expected.password &&
-        actual.additionalParameters === expected.additionalParameters && row.synonym === fields.synonym;
-}
 /** Client name is the profile identity. Different names intentionally remain separate connections. */
-export function reconcileVanessaClient(client: VanessaDebugClient, profiles: readonly VanessaClientProfile[]): ClientMatch {
+export function reconcileVanessaClient(client: VanessaDebugClient, profiles: readonly VanessaClientProfile[], supportsPort = false): ClientMatch {
     try { prepareVanessaClientProfile(client); } catch { return { state: 'unsupported' }; }
     const named = profiles.filter(row => fold(row.name) === fold(client.name));
     if (named.length > 1) { return { state: 'conflict' }; }
     const profile = named[0];
     if (profile) {
         if (!sameBase(profile.connection, client.infobase)) { return { state: 'conflict', profile, replaceable: !profile.connected }; }
-        return { state: settingsMatch(client, profile) ? profile.connected ? 'connected' : 'added' : 'outdated', profile };
+        // A disconnected profile must receive the saved port before connecting. A connected
+        // profile reports its effective port, which Vanessa may have selected during launch.
+        return { state: settingsMatch(client, profile, supportsPort && !profile.connected) ? profile.connected ? 'connected' : 'added' : 'outdated', profile };
     }
     const names = [client.name, client.synonym].filter(Boolean).map(fold);
     const occupied = profiles.filter(row => [row.name, row.synonym].filter(Boolean).some(name => names.includes(fold(name))));
@@ -86,7 +69,7 @@ export class VanessaInfobaseClients {
     private liveGeneration: number | undefined;
     private refreshing: Promise<void> | undefined;
     private pendingAction: string | null = null;
-    private lastError: string | null = null;
+    private lastError: { message: string; details?: string } | null = null;
     private disposed = false;
     private observed: VanessaInfobaseConnection | undefined;
     private readonly failedAutoAdds = new Set<string>();
@@ -107,12 +90,13 @@ export class VanessaInfobaseClients {
         const active = profiles?.filter(profile => profile.connected);
         const rows: VanessaInfobaseClientRow[] = this.catalog.filter(client => sameBase(client.infobase, infobase)).map(client => {
             const authentication = getVanessaDebugClientAuthentication(client);
-            const match: ClientMatch = profiles ? reconcileVanessaClient(client, profiles) : { state: 'unknown' };
+            const match: ClientMatch = profiles ? reconcileVanessaClient(client, profiles, connection.port) : { state: 'unknown' };
             return { id: client.id, name: client.name, username: authentication.username ?? '', synonym: client.synonym,
                 clientType: client.clientType, computerName: client.computerName, port: client.port,
                 hasPassword: !!authentication.password, hasAdditionalParameters: !!client.additionalParameters,
                 connected: ['added', 'connected', 'outdated'].includes(match.state) && !!match.profile?.connected, state: match.state, remoteName: match.profile?.name, replaceable: !!match.replaceable,
-                active: ['added', 'connected', 'outdated'].includes(match.state) && active?.length === 1 && active[0] === match.profile, portUnsupported: true };
+                active: ['added', 'connected', 'outdated'].includes(match.state) && active?.length === 1 && active[0] === match.profile, portUnsupported: !connection.port,
+                ...(match.profile?.port !== undefined ? { remotePort: match.profile.port } : {}) };
         });
         const suffix = (infobase.replace(/[\\/]+$/u, '').split(/[\\/]/u).at(-1) ?? '').replace(/[^\p{L}\p{N}_]/gu, '_').slice(0, 64);
         const stem = 'TestClient' + (suffix ? '_' + suffix : ''); let name = stem; let index = 2; let port = 1538;
@@ -120,15 +104,16 @@ export class VanessaInfobaseClients {
         while (port < 65535 && this.catalog.some(row => fold(row.computerName) === 'localhost' && row.port === port)) { port++; }
         for (const profile of profiles ?? []) {
             if (!sameBase(profile.connection, infobase) || rows.some(row => fold(row.name) === fold(profile.name))) { continue; }
-            const user = /(?:^|\s)\/N(?:"((?:[^"\n]|"")*)"|([^\s]+))/u.exec(profile.additionalParameters);
-            rows.push({ id: `live:${connection.generation}:${createHash('sha256').update(profile.name).digest('hex')}`, name: profile.name, username: user?.[1]?.replace(/""/gu, '"') ?? user?.[2] ?? '',
-                synonym: profile.synonym, clientType: /^(?:Thick|Толстый)$/iu.test(profile.clientType) ? 'Thick' : 'Thin', remoteClientType: profile.clientType, computerName: profile.computerName, port: 0,
+            const { username } = clientLaunchSettings(profile.connection, profile.additionalParameters);
+            rows.push({ id: `live:${connection.generation}:${createHash('sha256').update(profile.name).digest('hex')}`, name: profile.name, username,
+                synonym: profile.synonym, clientType: /^(?:Thick|Толстый)$/iu.test(profile.clientType) ? 'Thick' : 'Thin', remoteClientType: profile.clientType, computerName: profile.computerName, port: profile.port ?? 0,
                 remoteOnly: true, connected: profile.connected, hasPassword: false, hasAdditionalParameters: false,
-                state: profile.connected ? 'connected' : 'added', replaceable: false, active: active?.length === 1 && active[0] === profile, portUnsupported: true });
+                state: profile.connected ? 'connected' : 'added', replaceable: false, active: active?.length === 1 && active[0] === profile, portUnsupported: !connection.port });
         }
         const defaults = { name, username: '', synonym: '', clientType: 'Thin', computerName: 'localhost', port };
         const runtimeClients = (profiles ?? []).filter(row => row.connected && sameBase(row.connection, infobase)).map(row => ({ name: row.name, clientType: row.clientType }));
-        return { connection, rows, defaults, runtimeClients, loading: !!this.refreshing, pendingAction: this.pendingAction, error: this.lastError };
+        return { connection, rows, defaults, runtimeClients, loading: !!this.refreshing, pendingAction: this.pendingAction, error: this.lastError?.message ?? null,
+            ...(this.lastError?.details ? { errorDetails: this.lastError.details } : {}) };
     }
     async refresh(retryAutomaticAdds = false): Promise<void> {
         if (retryAutomaticAdds) { this.failedAutoAdds.clear(); }
@@ -138,7 +123,7 @@ export class VanessaInfobaseClients {
         const before = JSON.stringify([this.catalog, this.live, this.lastError]);
         const operation = (async () => {
             try {
-                let autoError: string | null = null;
+                let autoError: { message: string; details?: string } | null = null;
                 let catalog: readonly VanessaDebugClient[];
                 try { catalog = await this.ports.store.loadCatalog(); }
                 catch { throw error('Saved client credentials are unavailable. Use Connection settings → Saved Debug launch clients to re-enter them or explicitly replace the unavailable catalog.'); }
@@ -149,7 +134,7 @@ export class VanessaInfobaseClients {
                         await this.adoptObservedRenames(current, state.generation);
                         if (this.ports.autoAdd?.() && state.write) {
                             for (const client of this.catalog) {
-                                if (reconcileVanessaClient(client, current).state !== 'local') { continue; }
+                                if (reconcileVanessaClient(client, current, state.port).state !== 'local') { continue; }
                                 const key = JSON.stringify([state.generation, client]);
                                 if (this.failedAutoAdds.has(key)) { continue; }
                                 if (this.disposed || this.ports.connection().generation !== state.generation) { throw error('The Vanessa session changed. Refresh the client list.'); }
@@ -184,17 +169,40 @@ export class VanessaInfobaseClients {
     async saveClient(infobase: string, id: string | undefined, input: VanessaInfobaseClientEdit): Promise<void> {
         const fields = this.fields(input);
         for (const value of [input.password, input.additionalParameters]) { if (value !== undefined && (typeof value !== 'string' || value.length > 65536 || value.includes('\u0000'))) { throw error('The saved client field is invalid.'); } }
-        await this.mutate('save', async () => this.ports.store.updateCatalog(catalog => {
-            const previous = id ? this.requireClient(catalog, infobase, id) : undefined;
-            const authentication = previous ? getVanessaDebugClientAuthentication(previous) : {};
-            const updated = { ...previous, id: previous?.id ?? randomUUID(), infobase: normalizeInfobaseReference(infobase),
-                password: input.password ?? authentication.password ?? '', additionalParameters: input.additionalParameters ?? previous?.additionalParameters ?? '', ...fields };
-            if (catalog.some(row => row.id !== updated.id && (fold(row.name) === fold(updated.name) ||
-                fold(row.computerName) === fold(updated.computerName) && row.port === updated.port))) {
-                throw error('Choose a distinct client name and port for this computer.');
-            }
-            return previous ? catalog.map(row => row.id === previous.id ? updated : row) : [...catalog, updated];
-        }));
+        await this.mutate('save', async () => {
+            const state = this.ports.connection();
+            let saved: VanessaDebugClient | undefined;
+            await this.ports.store.updateCatalog(catalog => {
+                const previous = id ? this.requireClient(catalog, infobase, id) : undefined;
+                const authentication = previous ? getVanessaDebugClientAuthentication(previous) : {};
+                const updated = { ...previous, id: previous?.id ?? randomUUID(), infobase: normalizeInfobaseReference(infobase),
+                    password: input.password ?? authentication.password ?? '', additionalParameters: input.additionalParameters ?? previous?.additionalParameters ?? '', ...fields };
+                if (catalog.some(row => row.id !== updated.id && (fold(row.name) === fold(updated.name) ||
+                    fold(row.computerName) === fold(updated.computerName) && row.port === updated.port))) {
+                    throw error('Choose a distinct client name and port for this computer.');
+                }
+                saved = updated;
+                return previous ? catalog.map(row => row.id === previous.id ? updated : row) : [...catalog, updated];
+            });
+            // Saving an existing, disconnected profile also edits VA, without starting a client.
+            // New/imported profiles still follow the explicit Add action or automatic-add setting.
+            if (!id || !saved || !state.ready || state.busy || !state.read || !state.write) { return; }
+            const client = saved;
+            const current = () => {
+                if (this.disposed || this.ports.connection().generation !== state.generation || !this.ports.connection().ready) {
+                    throw error('The Vanessa session changed. Refresh the client list.');
+                }
+            };
+            await this.ports.run(async runtime => {
+                current(); const profiles = await runtime.list(); current();
+                const match = reconcileVanessaClient(client, profiles, state.port);
+                if (!match.profile || match.profile.connected || match.state !== 'outdated') { return; }
+                const latest = (await this.ports.store.loadCatalog()).find(row => row.id === client.id);
+                current();
+                if (JSON.stringify(latest) !== JSON.stringify(client)) { throw error('The Vanessa client profile changed. Refresh the client list.'); }
+                await runtime.apply(client, true, match.profile); current();
+            }, state.generation);
+        });
     }
     async saveRemoteClient(infobase: string, id: string): Promise<void> {
         const view = this.stateFor(infobase);
@@ -226,7 +234,7 @@ export class VanessaInfobaseClients {
         for (const client of this.catalog) {
             if (profiles.some(row => fold(row.name) === fold(client.name))) { continue; }
             const before = this.live.find(row => fold(row.name) === fold(client.name));
-            if (!before || !settingsMatch(client, before)) { continue; }
+            if (!before || !settingsMatch(client, before, false)) { continue; }
             const candidates = profiles.filter(row => !this.live!.some(old => fold(old.name) === fold(row.name)) &&
                 !this.catalog.some(saved => fold(saved.name) === fold(row.name)) && sameVanessaClientProfile({ ...row, name: before.name }, before));
             if (candidates.length === 1) { renames.set(client.id, { name: candidates[0].name, before: client }); }
@@ -288,7 +296,7 @@ export class VanessaInfobaseClients {
             const current = () => { if (this.disposed || this.ports.connection().generation !== state.generation || !this.ports.connection().ready) { throw error('The Vanessa session changed. Refresh the client list.'); } };
             await this.ports.run(async runtime => {
                 current(); let profiles = await runtime.list(); current();
-                const matches = selected.map(client => ({ client, match: reconcileVanessaClient(client, profiles) }));
+                const matches = selected.map(client => ({ client, match: reconcileVanessaClient(client, profiles, state.port) }));
                 if (action === 'replace' && (matches.length !== 1 || !expectedReplacement || expectedReplacement.generation !== state.generation ||
                     !matches[0].match.profile || !sameVanessaClientProfile(matches[0].match.profile, expectedReplacement.profile))) { throw error('The replacement target changed. Refresh the client list.'); }
                 for (const { match } of matches) {
@@ -316,7 +324,7 @@ export class VanessaInfobaseClients {
                         await runtime.apply(client, true, target); applied = true;
                     }
                     current(); profiles = await runtime.list(); current();
-                    const fresh = reconcileVanessaClient(client, profiles);
+                    const fresh = reconcileVanessaClient(client, profiles, state.port);
                     if (action === 'disconnect' && match.state === 'local') { continue; }
                     if (!fresh.profile || !['added', 'connected'].includes(fresh.state) && !(action === 'disconnect' && fresh.state === 'outdated') ||
                         !applied && approved && !sameVanessaClientProfile(approved, fresh.profile)) {
@@ -343,16 +351,16 @@ export class VanessaInfobaseClients {
         return { name: text(input.name, true), username: text(input.username), synonym: text(input.synonym),
             clientType: input.clientType, computerName: text(input.computerName, true), port: input.port };
     }
-    private safeError(cause: unknown): string {
-        return cause instanceof VanessaInfobaseClientError || cause instanceof VanessaClientControlError ? cause.message : 'The Vanessa client operation was not confirmed. Refresh the client list.';
+    private safeError(cause: unknown): { message: string; details?: string } {
+        return cause instanceof VanessaClientControlError ? { message: cause.message, details: cause.details } : { message: 'The Vanessa client operation was not confirmed. Refresh the client list.' };
     }
     private async mutate(action: string, work: () => Promise<void>): Promise<void> {
         if (this.pendingAction || this.disposed) { throw error('A client operation is already in progress.'); }
         await this.refreshing;
         if (this.pendingAction || this.disposed) { throw error('A client operation is already in progress.'); }
-        this.pendingAction = action; this.lastError = null; this.changed(); let failure: string | undefined;
+        this.pendingAction = action; this.lastError = null; this.changed(); let failure: { message: string; details?: string } | undefined;
         try { await work(); }
-        catch (cause) { failure = this.safeError(cause); throw error(failure); }
+        catch (cause) { failure = this.safeError(cause); throw error(failure.message, failure.details); }
         finally { this.pendingAction = null; await this.refresh(); if (failure) { this.lastError = failure; } this.changed(); }
     }
 }

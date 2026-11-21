@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -109,7 +110,7 @@ function loadNavigationModule(): Record<string, unknown> {
     vm.runInNewContext(compiled, {
         module: moduleObject,
         exports: moduleObject.exports,
-        require: (specifier: string) => specifier === 'vscode' ? vscode : specifier === './featureNestedScenarioUtils' ? nestedModule.exports : {},
+        require: (specifier: string) => specifier === './kotInteraction' ? nativeInteraction : (specifier === 'vscode' ? vscode : specifier === './featureNestedScenarioUtils' ? nestedModule.exports : {}),
         console
     });
     return moduleObject.exports;

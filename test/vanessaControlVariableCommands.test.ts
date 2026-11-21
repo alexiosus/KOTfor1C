@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -18,7 +19,7 @@ test('an already visible variables view loads when attach becomes ready and has 
     const module = { exports: {} as any }; const ts = require('typescript') as typeof import('typescript');
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/vanessaControlVariableCommands.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
-    { module, exports: module.exports, require: (name: string) => name === 'vscode' ? vscode : name.endsWith('VariablesPanel') ? panels : variables });
+    { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === 'vscode' ? vscode : name.endsWith('VariablesPanel') ? panels : variables) });
     module.exports.registerVanessaVariableCommands({ subscriptions: [] }, { get snapshot() { return snapshot; }, busy: false,
         onDidChange: (callback: () => void) => { listeners.push(callback); return { dispose() {} }; },
         withVariableControl: async (work: (runtime: variables.VanessaRuntimeVariables) => Promise<unknown>) => { reads++; return work(new variables.VanessaRuntimeVariables({ request: async () => ({ content: [{ type: 'text', text: '# Переменные контекста\n\n## Контекст ($var$)\n- `Own` = Value\n\n## Сохраняемый контекст ($$var$$)' }] }) })); } }, await translatorFor('Русский'));

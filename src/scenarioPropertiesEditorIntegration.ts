@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import { editorActionsAreEnabled } from './editorActionControls';
 import * as vscode from 'vscode';
 import { ScenarioYamlEditor, ScenarioYamlFoldingProvider } from './scenarioYamlEditor';
@@ -5,6 +6,8 @@ import { ScenarioPropertiesPanel } from './scenarioPropertiesPanel';
 import { createScenarioPropertiesActions, type ScenarioPropertiesActionOptions } from './scenarioPropertiesActions';
 import { isScenarioYamlFile, isProcessYamlFile } from './yamlValidator';
 import type { Translator } from './localization';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 export const SCENARIO_PROPERTIES_EDITOR_COMMAND = 'kotTestToolkit.openScenarioEditor';
 
@@ -24,7 +27,7 @@ export function registerScenarioPropertiesEditor(context: vscode.ExtensionContex
                 : value && typeof value === 'object' && 'scheme' in value ? value as vscode.Uri : vscode.window.activeTextEditor?.document.uri;
             await panel.open(uri);
         } catch (error) {
-            void vscode.window.showErrorMessage(t('Could not open test editor: {0}', error instanceof Error ? error.message : String(error)));
+            void kotUi.showErrorMessage(t('Could not open test editor: {0}', error instanceof Error ? error.message : String(error)));
         }
     }));
     context.subscriptions.push(vscode.languages.registerCodeLensProvider([

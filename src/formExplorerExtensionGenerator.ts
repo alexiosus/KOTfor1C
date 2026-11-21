@@ -1,3 +1,4 @@
+import { kotWindow, hasKotInteraction, assertKotPath } from './kotInteraction';
 import * as cp from 'node:child_process';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
@@ -36,6 +37,8 @@ import {
     resolveOneCPlatformForLaunch
 } from './oneCPlatform';
 import { formatProcessCommandForDisplay } from './processCommandDisplay';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 interface BaseConfigurationInfo {
     name: string;
@@ -448,7 +451,7 @@ async function promptInfobaseAuthentication(
     retryMode: boolean
 ): Promise<InfobaseAuthentication | undefined> {
     const defaultUsername = (initialAuthentication?.username || '').trim() || 'Administrator';
-    const username = await vscode.window.showInputBox({
+    const username = await kotUi.showInputBox({
         title: retryMode
             ? t('Infobase authentication failed. Enter infobase login')
             : t('Enter infobase login'),
@@ -460,7 +463,7 @@ async function promptInfobaseAuthentication(
         return undefined;
     }
 
-    const password = await vscode.window.showInputBox({
+    const password = await kotUi.showInputBox({
         title: t('Enter infobase password'),
         placeHolder: t('Password can be empty'),
         value: initialAuthentication?.password || '',
@@ -581,6 +584,7 @@ async function showQuickPickWithDefaultSelection<T extends vscode.QuickPickItem>
         activeItem: T;
     }
 ): Promise<T | undefined> {
+    if (hasKotInteraction?.()) { return kotUi.showQuickPick(items, { title: options.title, placeHolder: options.placeHolder, ignoreFocusOut: true }); }
     return await new Promise<T | undefined>(resolve => {
         const quickPick = vscode.window.createQuickPick<T>();
         let settled = false;
@@ -741,7 +745,7 @@ async function pickCfeOutputPath(
     t: Awaited<ReturnType<typeof getTranslator>>
 ): Promise<string | null> {
     const defaultUri = vscode.Uri.file(path.join(generatedArtifactsDirectory, 'KOTFormExplorerRuntime.cfe'));
-    const outputUri = await vscode.window.showSaveDialog({
+    const outputUri = await kotUi.showSaveDialog({
         title: t('Choose destination .cfe file'),
         defaultUri,
         filters: {
@@ -6394,7 +6398,7 @@ async function resolveConfiguredOneCClientExePath(
 
     if (!oneCClientExePath) {
         const action = t('Open Settings');
-        vscode.window.showErrorMessage(
+        kotUi.showErrorMessage(
             t('No 1C platforms are configured. Configure them in settings or open the platform manager.'),
             action
         ).then(selection => {
@@ -6409,7 +6413,7 @@ async function resolveConfiguredOneCClientExePath(
 
     if (!(await pathExists(oneCClientExePath))) {
         const action = t('Open Settings');
-        vscode.window.showErrorMessage(
+        kotUi.showErrorMessage(
             t('1C:Enterprise client file not found at path: {0}', oneCClientExePath),
             action
         ).then(selection => {
@@ -6434,7 +6438,7 @@ async function resolveConfiguredOneCDesignerExePath(
 
     if (!(await pathExists(oneCDesignerExePath))) {
         const action = t('Open Settings');
-        vscode.window.showErrorMessage(
+        kotUi.showErrorMessage(
             t('1C:Enterprise Designer file not found at path: {0}', oneCDesignerExePath),
             action
         ).then(selection => {
@@ -6634,9 +6638,12 @@ async function handleGenerateFormExplorerExtensionCore(
     const showOutputPanel = vscode.workspace.getConfiguration('kotTestToolkit.formExplorer').get<boolean>('showOutputPanel', false);
     const preferredOneCClientExePath = normalizeOneCClientExePath(options?.oneCClientExePath || '');
 
+    if (generatedArtifactsDirectory) { await assertKotPath(generatedArtifactsDirectory, true); }
+    if (snapshotPath) { await assertKotPath(snapshotPath, true); }
+
     if (!generatedArtifactsDirectory) {
         const action = t('Open Settings');
-        vscode.window.showErrorMessage(
+        kotUi.showErrorMessage(
             t('Form Explorer generated artifacts directory is not configured. Set kotTestToolkit.formExplorer.generatedArtifactsDirectory.'),
             action
         ).then(selection => {
@@ -6649,7 +6656,7 @@ async function handleGenerateFormExplorerExtensionCore(
 
     if (!snapshotPath) {
         const action = t('Open Settings');
-        vscode.window.showErrorMessage(
+        kotUi.showErrorMessage(
             t('Form Explorer snapshot path is not configured. Set kotTestToolkit.formExplorer.snapshotPath.'),
             action
         ).then(selection => {
@@ -6688,6 +6695,7 @@ async function handleGenerateFormExplorerExtensionCore(
     const targetInfobaseFilePath = targetInfobasePath
         ? getFileInfobasePath(targetInfobasePath)
         : null;
+    if (targetInfobaseFilePath) { await assertKotPath(targetInfobaseFilePath); }
     const requestedInstallMode = tryParseFormExplorerInstallMode(options?.installMode);
     const effectiveInstallMode = runMode === 'install' && targetInfobasePath
         ? (requestedInstallMode || await pickFormExplorerInstallMode(t, targetInfobasePath))
@@ -6700,7 +6708,7 @@ async function handleGenerateFormExplorerExtensionCore(
         || effectiveInstallMode !== 'target';
     if (requiresConfiguredConfigurationSourceDirectory && !configuredConfigurationSourceDirectory) {
         const action = t('Open Settings');
-        vscode.window.showErrorMessage(
+        kotUi.showErrorMessage(
             t('Form Explorer configuration source directory is not configured. Set kotTestToolkit.formExplorer.configurationSourceDirectory.'),
             action
         ).then(selection => {
@@ -6712,9 +6720,10 @@ async function handleGenerateFormExplorerExtensionCore(
     }
 
     if (requiresConfiguredConfigurationSourceDirectory && configuredConfigurationSourceDirectory) {
+        await assertKotPath(configuredConfigurationSourceDirectory);
         const configurationXmlPath = path.join(configuredConfigurationSourceDirectory, 'Configuration.xml');
         if (!(await pathExists(configurationXmlPath))) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 t('Could not find Configuration.xml in {0}.', configuredConfigurationSourceDirectory)
             );
             return;
@@ -6728,7 +6737,7 @@ async function handleGenerateFormExplorerExtensionCore(
     }
 
     try {
-        const generationResult = await vscode.window.withProgress<{
+        const generationResult = await kotUi.withProgress<{
             project: GeneratedExtensionProject;
             buildExecuted: boolean;
             installExecuted: boolean;
@@ -6872,7 +6881,7 @@ async function handleGenerateFormExplorerExtensionCore(
                 if (!buildExecuted && !shouldDirectInstallIntoTarget && process.platform !== 'win32') {
                     const openSettingsAction = t('Open Settings');
                     const revealAction = t('Reveal Output');
-                    vscode.window.showInformationMessage(
+                    kotUi.showInformationMessage(
                         t('Form Explorer extension project was generated. Configure kotTestToolkit.formExplorer.extensionBuildCommandTemplate if you need an external builder.'),
                         openSettingsAction,
                         revealAction
@@ -7006,7 +7015,7 @@ async function handleGenerateFormExplorerExtensionCore(
                 ? t('Form Explorer extension installed into infobase: {0}', installedInfobasePath)
                 : t('Form Explorer .cfe build completed: {0}', builtProject.cfeOutputPath);
             if (installExecuted) {
-                vscode.window.showInformationMessage(
+                kotUi.showInformationMessage(
                     completionMessage,
                     openOutputAction
                 ).then(selection => {
@@ -7016,7 +7025,7 @@ async function handleGenerateFormExplorerExtensionCore(
                 });
             } else {
                 const revealAction = t('Reveal in OS');
-                vscode.window.showInformationMessage(
+                kotUi.showInformationMessage(
                     completionMessage,
                     revealAction,
                     openOutputAction
@@ -7031,7 +7040,7 @@ async function handleGenerateFormExplorerExtensionCore(
         } else if (installExecuted && installedInfobasePath) {
             outputChannel.appendLine(t('Form Explorer extension installed into infobase: {0}', installedInfobasePath));
             const openOutputAction = t('Open Output');
-            vscode.window.showInformationMessage(
+            kotUi.showInformationMessage(
                 t('Form Explorer extension installed into infobase: {0}', installedInfobasePath),
                 openOutputAction
             ).then(selection => {
@@ -7041,7 +7050,7 @@ async function handleGenerateFormExplorerExtensionCore(
             });
         } else {
             outputChannel.appendLine(t('Build finished, but the expected .cfe file was not found: {0}', builtProject.cfeOutputPath));
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 t('Build finished, but the expected .cfe file was not found: {0}', builtProject.cfeOutputPath)
             );
         }
@@ -7049,7 +7058,7 @@ async function handleGenerateFormExplorerExtensionCore(
         const message = error instanceof Error ? error.message : String(error);
         outputChannel.appendLine(t('Form Explorer extension generation failed: {0}', message));
         if (!(error instanceof Error && 'alreadyShownToUser' in error && (error as Error & { alreadyShownToUser?: boolean }).alreadyShownToUser)) {
-            vscode.window.showErrorMessage(t('Form Explorer extension generation failed: {0}', message));
+            kotUi.showErrorMessage(t('Form Explorer extension generation failed: {0}', message));
         }
     }
 }
@@ -7107,7 +7116,7 @@ export async function handleStartFormExplorerInfobase(
 ): Promise<StartFormExplorerInfobaseResult> {
     const t = await getTranslator(context.extensionUri);
     if (process.platform !== 'win32') {
-        vscode.window.showErrorMessage(
+        kotUi.showErrorMessage(
             t('Starting target infobase is supported only on Windows where 1C client is available.')
         );
         return {
@@ -7128,6 +7137,9 @@ export async function handleStartFormExplorerInfobase(
     const workspaceRootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
     const runtimeDirectory = generatedArtifactsDirectory || path.join(workspaceRootPath, '.vscode', 'kot-runtime', 'form-explorer');
     const logsDirectory = path.join(runtimeDirectory, 'build-logs');
+    await assertKotPath(runtimeDirectory, true);
+    const snapshotPath = getFormExplorerSnapshotPath();
+    if (snapshotPath) { await assertKotPath(snapshotPath, true); }
     const outputChannel = getFormExplorerBuilderOutputChannel();
     if (vscode.workspace.getConfiguration('kotTestToolkit.formExplorer').get<boolean>('showOutputPanel', false)) {
         outputChannel.show(true);
@@ -7158,6 +7170,7 @@ export async function handleStartFormExplorerInfobase(
             throw new Error(t('Form Explorer is not supported for web infobases.'));
         }
         const targetInfobaseFilePath = getFileInfobasePath(targetInfobasePath);
+        if (targetInfobaseFilePath) { await assertKotPath(targetInfobaseFilePath); }
         if (targetInfobaseFilePath && !(await pathExists(targetInfobaseFilePath))) {
             throw new Error(t('Target infobase path does not exist: {0}', targetInfobasePath));
         }
@@ -7264,7 +7277,7 @@ export async function handleStartFormExplorerInfobase(
             t
         );
 
-        vscode.window.showInformationMessage(
+        kotUi.showInformationMessage(
             t('1C infobase launch started: {0}', describeInfobaseConnection(targetInfobasePath))
         );
         await updateManagedInfobaseMetadata(context, targetInfobasePath, {
@@ -7285,7 +7298,7 @@ export async function handleStartFormExplorerInfobase(
         const message = error instanceof Error ? error.message : String(error);
         outputChannel.appendLine(t('Failed to start target infobase for Form Explorer: {0}', message));
         if (!(error instanceof Error && 'alreadyShownToUser' in error && (error as Error & { alreadyShownToUser?: boolean }).alreadyShownToUser)) {
-            vscode.window.showErrorMessage(t('Failed to start target infobase for Form Explorer: {0}', message));
+            kotUi.showErrorMessage(t('Failed to start target infobase for Form Explorer: {0}', message));
         }
         return {
             status: 'error',

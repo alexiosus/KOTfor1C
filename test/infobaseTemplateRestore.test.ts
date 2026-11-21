@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -34,6 +35,7 @@ function harness(options: { templateCancelled?: boolean; confirmed?: boolean; fi
         },
         './localization': { getTranslator: async () => translate },
         './oneCInfobaseConnection': connections,
+        './startupInfobase': { getSharedStartupInfobasePaths: () => undefined },
         './infobaseDestructiveConfirmation': confirmations,
         './processCommandDisplay': commandDisplay,
         './oneCPlatform': {
@@ -56,7 +58,7 @@ function harness(options: { templateCancelled?: boolean; confirmed?: boolean; fi
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/infobaseManager.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
     }).outputText, { module, exports: module.exports, process: runtime, Buffer, console,
-        require: (name: string) => dependencies[name] ?? (name.startsWith('node:') ? require(name) : {}) });
+        require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name] ?? (name.startsWith('node:') ? require(name) : {})) });
     return { calls, state, context, target,
         restore: (source?: string) => module.exports.restoreInfobaseFromDtInteractive(context, target, source) as Promise<void> };
 }

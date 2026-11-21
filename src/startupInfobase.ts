@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as cp from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -11,6 +12,8 @@ import { formatProcessCommandForDisplay } from './processCommandDisplay';
 import { McpComponentProvisioner, VANESSA_MCP_COMPONENT, buildMcpExtensionInstallArgs, recordBundledMcpComponents } from './vanessaControlProvisioning';
 import { parseMcpPermissionsReport } from './vanessaControlPermissions';
 import { acquireMcpComponent } from './vanessaControlComponentCache';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 const OUTPUT_CHANNEL_NAME = 'KOT Startup Infobase';
 const STARTUP_INFOBASE_ROOT_RELATIVE_PATH = path.join('.vscode', 'kot-runtime', 'startup-infobase');
@@ -489,7 +492,7 @@ export async function ensureSharedStartupInfobaseReady(
     const prepare = () => serializeStartupInfobasePreparation(ensureKey, performEnsure);
     const operation = Promise.resolve(options?.showProgressNotification === false
         ? prepare()
-        : vscode.window.withProgress(
+        : kotUi.withProgress(
             {
                 location: vscode.ProgressLocation.Notification,
                 title: options?.progressTitle || t('Preparing shared startup infobase...'),

@@ -2,7 +2,7 @@ import type { FormExplorerSnapshot } from './formExplorerTypes';
 import type { VanessaFormStepCache, VanessaFormStepResult } from './vanessaControlFormSteps';
 import { VanessaFormContextChangedError, VanessaFormControlError, type VanessaFormWindows, type VanessaRuntimeForms } from './vanessaControlForms';
 export interface VanessaFormSourcePorts {
-    snapshot(): { generation: number; ready: boolean; supported: boolean; busy?: boolean; windowsSupported?: boolean };
+    snapshot(): { generation: number; ready: boolean; supported: boolean; busy?: boolean; windowsSupported?: boolean; elementStepsSupported?: boolean };
     run<T>(work: (forms: VanessaRuntimeForms) => Promise<T>, isCurrent: () => boolean): Promise<T>;
     enrich?(snapshot: FormExplorerSnapshot): Promise<FormExplorerSnapshot>;
     completionEnabled?(): boolean;
@@ -17,15 +17,18 @@ export class VanessaFormExplorerSource {
     private pending: Promise<FormExplorerSnapshot | undefined> | undefined;
     private pendingKind: 'tree' | 'identity' | 'element' | undefined;
     private readonly listeners = new Set<() => void>();
+    private readonly completionValues = new Map<string, number>();
     get state() { return this.value; }
     get available() { return !this.disposed && this.ports.snapshot().supported; }
     get inspectionReady() { const state = this.ports.snapshot(); return !!this.cached() && !this.pending && !state.busy; }
     get windowControlsAvailable() { return this.available && this.ports.snapshot().windowsSupported !== false; }
+    get elementChecksAvailable() { return this.available && !!this.ports.snapshot().elementStepsSupported; }
     constructor(private readonly ports: VanessaFormSourcePorts) { this.sessionChanged(); }
     onDidChange(listener: () => void) { this.listeners.add(listener); return { dispose: () => this.listeners.delete(listener) }; }
     sessionChanged(): void {
         const state = this.ports.snapshot();
         if (this.generation !== state.generation || !state.ready || !state.supported) {
+            this.completionValues.clear();
             this.revision++;
             if (this.generation !== state.generation) { this.pending = undefined; this.pendingKind = undefined; this.failedGeneration = undefined; }
             this.publish({ status: state.ready && state.supported ? 'idle' : 'unavailable' });
@@ -73,6 +76,21 @@ export class VanessaFormExplorerSource {
         if (!snapshot || this.pending) { return Promise.resolve(undefined); }
         return this.perform(forms => forms.element(snapshot, path), 'element');
     }
+    /** Resolve only the selected suggestion; repeated editor requests share a short-lived value cache. */
+    async completionElement(expected: FormExplorerSnapshot, path: string, isCurrent: () => boolean): Promise<FormExplorerSnapshot | undefined> {
+        if (this.pending) { await this.pending; }
+        const snapshot = this.cached();
+        if (!isCurrent() || this.ports.completionEnabled?.() === false || !snapshot?.source?.sessionId
+            || snapshot.source.sessionId !== expected.source?.sessionId) { return; }
+        const key = `${snapshot.source.sessionId}\0${path}`;
+        if (Date.now() - (this.completionValues.get(key) ?? -Infinity) < 5_000) { return snapshot; }
+        const inspected = await this.perform(forms => forms.element(snapshot, path), 'element', isCurrent);
+        if (inspected) {
+            if (this.completionValues.size >= 64) { this.completionValues.clear(); }
+            this.completionValues.set(key, Date.now());
+        }
+        return inspected;
+    }
     async steps(expected: FormExplorerSnapshot, path: string, cache: VanessaFormStepCache, language: string, isCurrent: () => boolean): Promise<VanessaFormStepResult | undefined> {
         if (!this.inspectionReady || this.cached() !== expected || !isCurrent()) { return; }
         let result: VanessaFormStepResult | undefined;
@@ -110,7 +128,7 @@ export class VanessaFormExplorerSource {
                 if (current() && snapshot !== previous && this.ports.enrich) {
                     try { snapshot = await this.ports.enrich(snapshot); } catch { /* Optional local metadata never blocks the live form. */ }
                 }
-                if (current()) { this.readAt = Date.now(); this.publish({ status: 'ready', snapshot }); return snapshot; }
+                if (current()) { if (kind === 'tree') { this.completionValues.clear(); } this.readAt = Date.now(); this.publish({ status: 'ready', snapshot }); return snapshot; }
             } catch (error) {
                 if ((!isCurrent || isCurrent()) && (current() || !this.disposed && this.ports.snapshot().generation === state.generation && this.value.status === 'idle')) {
                     const retain = kind === 'element' && previous && error instanceof VanessaFormControlError && !(error instanceof VanessaFormContextChangedError);

@@ -1,4 +1,6 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
+import { createHash } from 'node:crypto';
 import {
     addInfobaseToLauncherInteractive,
     configureInfobaseStartupParametersInteractive,
@@ -23,10 +25,13 @@ import {
 } from './infobaseManager';
 import type { ManagedInfobaseService } from './managedInfobaseService';
 import { VanessaInfobaseClientError, type VanessaInfobaseClients, type VanessaInfobaseClientsView } from './vanessaInfobaseClients';
+import { formatVanessaClientError } from './vanessaControlClients';
 import { managedInfobaseRuntimeTracker } from './infobaseRuntimeTracker';
 import { getTranslator } from './localization';
 import { normalizeInfobaseConnectionIdentity } from './oneCInfobaseConnection';
 import { type ConfiguredOneCPlatform, ensureOneCPlatformsCatalogInitialized } from './oneCPlatform';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 type InfobaseManagerSortMode = 'alphabetical' | 'lastOpened' | 'manual';
 
@@ -81,6 +86,23 @@ function escapeHtml(text: string): string {
 }
 
 export class InfobaseManagerPanel implements vscode.Disposable {
+    async apiPreferences(input?: { expectedRevision: string; sortMode?: InfobaseManagerSortMode; showHidden?: boolean; manualIds?: string[] }): Promise<unknown> {
+        this.infobases = [...(await this.managedInfobaseService.refresh()).infobases];
+        const ids = new Map(this.infobases.map(base => [this.normalizePathForCompare(base.infobasePath), base.id]));
+        const values = { sortMode: this.getSortMode(), showHidden: this.getShowHidden(), manualIds: this.buildReconciledManualOrder(this.infobases).map(key => ids.get(key)!) };
+        const revision = createHash('sha256').update(JSON.stringify(values)).digest('hex');
+        if (!input) { return { revision, ...values }; }
+        if (input.expectedRevision !== revision) { throw new Error('Infobase preferences changed. Read preferences again.'); }
+        if (input.sortMode !== undefined && !['alphabetical', 'lastOpened', 'manual'].includes(input.sortMode)) { throw new Error('Invalid infobase sort mode.'); }
+        if (input.manualIds && (input.manualIds.length !== ids.size || new Set(input.manualIds).size !== ids.size || input.manualIds.some(id => !values.manualIds.includes(id)))) { throw new Error('The manual order must contain every current infobase ID once.'); }
+        if (input.showHidden !== undefined) { await this.setShowHidden(input.showHidden); }
+        if (input.sortMode) { await this.setSortMode(input.sortMode); }
+        if (input.manualIds) {
+            const paths = new Map(this.infobases.map(base => [base.id, base.infobasePath]));
+            await this.setStoredManualOrder(input.manualIds.map(id => paths.get(id)!));
+        }
+        await this.postState(); return this.apiPreferences();
+    }
     public static readonly panelType = 'kotTestToolkit.infobaseManagerPanel';
 
     private panel: vscode.WebviewPanel | null = null;
@@ -221,7 +243,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
         const running = managedInfobaseRuntimeTracker.runningIdentities();
         const clients = this.selectedInfobasePath && this.clients ? this.clients.service.stateFor(this.selectedInfobasePath) : null;
         return {
-            vanessaClients: clients ? { ...clients, error: clients.error ? this.clientTranslate(clients.error) : null } : null,
+            vanessaClients: clients ? { ...clients, error: clients.error ? formatVanessaClientError({ message: clients.error, details: clients.errorDetails }, this.clientTranslate) : null } : null,
             clientFocusRequest: this.clientFocusRequest,
             infobases: this.infobases.map(infobase => ({ ...infobase,
                 runtimeModes: [...(managedInfobaseRuntimeTracker.runningModes?.(infobase.infobasePath) ?? []), ...(this.clients?.service.stateFor(infobase.infobasePath).runtimeClients?.length ? ['vanessa'] : [])],
@@ -407,7 +429,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
             this.lastError = message;
-            vscode.window.showErrorMessage(message);
+            kotUi.showErrorMessage(message);
         } finally {
             this.pendingAction = null;
             this.pendingInfobasePath = null;
@@ -436,7 +458,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                 } else { await this.clients.handle(record.infobasePath, message); }
             } catch (error) {
                 failed = true;
-                this.lastError = t(error instanceof VanessaInfobaseClientError ? error.message : 'The saved client action could not be completed. Refresh the list.');
+                this.lastError = error instanceof VanessaInfobaseClientError ? formatVanessaClientError(error, t) : t('The saved client action could not be completed. Refresh the list.');
             } finally {
                 await this.postState();
                 if (message.command === 'clientSave' && this.panel === originatingPanel) {
@@ -491,7 +513,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                 return;
             case 'addManual':
                 await this.executePanelAction(t('Adding infobase path...'), async () => {
-                    const selection = await vscode.window.showOpenDialog({
+                    const selection = await kotUi.showOpenDialog({
                         canSelectFiles: false,
                         canSelectFolders: true,
                         canSelectMany: false,
@@ -672,7 +694,8 @@ export class InfobaseManagerPanel implements vscode.Disposable {
             vanessaClients: {
                 title: t('Vanessa test clients'), connectManager: t('Connect Vanessa'), settings: t('Connection settings'), refresh: t('Refresh'),
                 hint: t('Select saved users to add or connect them in the current Vanessa session.'), all: t('All users'), new: t('Add user'),
-                liveOnly: t('Vanessa only'), saveToKot: t('Save to KOT'), outdated: t('Changes not applied'), updateConnect: t('Apply and connect'), passwordLabel: t('Password'), keysLabel: t('Launch keys'), emptyShort: t('No saved test clients.'),
+                liveOnly: t('Vanessa only'), saveToKot: t('Save to KOT'), outdated: t('Settings differ from saved'), updateConnect: t('Apply and connect'), passwordLabel: t('Password'), keysLabel: t('Launch keys'), emptyShort: t('No saved test clients.'),
+                currentPort: t('Port in Vanessa: {0}'),
                 working: t('Updating clients…'), loading: t('Reading clients…'), ready: t('Vanessa connected'), detached: t('Vanessa not connected'),
                 add: t('Add to Vanessa'), connect: t('Connect'), disconnect: t('Disconnect'), select: t('Select client'),
                 empty: t('No saved users for this infobase. Add a user or leave its name empty for the default user.'),

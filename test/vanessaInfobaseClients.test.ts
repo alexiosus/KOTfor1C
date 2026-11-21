@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { VanessaInfobaseClients, reconcileVanessaClient, getVanessaInfobaseConnection, type VanessaInfobaseClientPorts } from '../src/vanessaInfobaseClients';
-import { prepareVanessaClientProfile, type VanessaClientProfile, type VanessaRuntimeClients } from '../src/vanessaControlClients';
+import { prepareVanessaClientProfile, VanessaClientControlError, type VanessaClientProfile, type VanessaRuntimeClients } from '../src/vanessaControlClients';
 import type { VanessaDebugClient } from '../src/vanessaDebugClients';
 const client: VanessaDebugClient = { id: 'own', name: 'Own', infobase: '/bases/own', username: 'Tester', password: 'private',
     synonym: '', clientType: 'Thin', computerName: 'localhost', port: 1538, additionalParameters: '/private-key' };
@@ -20,7 +20,7 @@ function setup(initial: readonly VanessaDebugClient[] = [client]) {
     const runtime = { list: async () => live,
         apply: async (row: VanessaDebugClient, acknowledged: boolean, expected: VanessaClientProfile | null) => {
             assert.equal(acknowledged, true); writes.push('add:' + row.id);
-            live = [...live.filter(value => value.name !== row.name), profile(row)];
+            live = [...live.filter(value => value.name !== row.name), { ...profile(row), ...(ports.connection().port ? { port: row.port } : {}) }];
             assert.ok(expected === null || typeof expected === 'object');
         },
         connect: async (name: string) => { writes.push('connect:' + name); live = live.map(value => ({ ...value, connected: value.name === name || value.connected })); },
@@ -73,10 +73,11 @@ test('profile names identify separate Vanessa rows even when connection settings
     assert.equal(reconcileVanessaClient({ ...client, name: 'Second' }, [profile()]).state, 'local');
 });
 
-test('editing a same-base named profile is a pending update that Connect applies', async () => {
+test('saving a same-base named profile applies its settings without connecting', async () => {
     const h = setup(); h.live([profile()]); await h.service.refresh();
     await h.service.saveClient('/bases/own', 'own', { ...client, username: 'Changed' });
-    assert.equal(h.service.stateFor('/bases/own').rows[0].state, 'outdated');
+    assert.equal(h.service.stateFor('/bases/own').rows[0].state, 'added');
+    assert.deepEqual(h.writes, ['add:own']);
     await h.service.operate('/bases/own', ['own'], 'connect');
     assert.deepEqual(h.writes, ['add:own', 'connect:Own']);
 });
@@ -209,7 +210,7 @@ test('all selected conflicts are checked before writing any profile', async () =
     await assert.rejects(h.service.operate('/bases/own', ['own', 'second'], 'connect'));
     assert.deepEqual(h.writes, []);
 });
-test('local edits and deletion never connect or change a remote profile; stale row IDs reject', async () => {
+test('editing a local-only client and deletion never create or connect a remote profile; stale row IDs reject', async () => {
     const h = setup(); await h.service.refresh();
     await h.service.saveClient('/bases/own', 'own', { ...client, username: 'Changed' });
     await h.service.setSecret('/bases/own', 'own', 'password', 'changed-private');
@@ -282,4 +283,184 @@ test('equivalent authentication does not hide changed passwords or other launch 
     assert.equal(reconcileVanessaClient(saved, [remote]).state, 'added');
     assert.equal(reconcileVanessaClient(saved, [{ ...remote, additionalParameters: '/DisableStartupMessages /N"Tester" /P"changed"' }]).state, 'outdated');
     assert.equal(reconcileVanessaClient(saved, [{ ...remote, additionalParameters: '/N"Tester" /P"private"' }]).state, 'outdated');
+});
+
+test('spaced authentication and omitted empty passwords do not mark profiles as unapplied', () => {
+    for (const password of ['private', '', 'text "quoted" /Ninside']) {
+        const saved = { ...client, username: 'Test User', password, additionalParameters: '/C"text /Pinside" /DisableStartupMessages' };
+        const quoted = password.replace(/"/gu, '""');
+        const parameters = `/N "Test User" ${password ? '/P "' + quoted + '" ' : ''}/C"text /Pinside" /DisableStartupMessages`;
+        const row = { ...profile(saved), additionalParameters: parameters };
+        assert.equal(reconcileVanessaClient(saved, [row]).state, 'added');
+        assert.equal(reconcileVanessaClient(saved, [{ ...row, connected: true }]).state, 'connected');
+        assert.equal(reconcileVanessaClient(saved, [{ ...row, additionalParameters: parameters + ' /P "different"' }]).state, 'outdated');
+    }
+});
+
+test('connected profiles with real settings differences retain their connected flag', async () => {
+    const h = setup(); h.live([{ ...profile({ ...client, username: 'Changed' }), connected: true, port: 1540 }]); await h.service.refresh();
+    const row = h.service.stateFor(client.infobase).rows[0];
+    assert.equal(row.state, 'outdated'); assert.equal(row.connected, true); assert.equal(row.remotePort, 1540); assert.equal(row.port, 1538);
+    assert.ok(h.service.stateFor(client.infobase).runtimeClients.length);
+});
+
+test('a port selected by Vanessa is effective runtime state, including after refresh or session replacement', async () => {
+    const h = setup(); h.live([{ ...profile(), connected: true, port: 48002 }]);
+    for (const newSession of [false, true]) {
+        if (newSession) { h.changeSession(); }
+        await h.service.refresh();
+        const row = h.service.stateFor(client.infobase).rows[0];
+        assert.equal(row.state, 'connected'); assert.equal(row.connected, true);
+        assert.equal(row.remotePort, 48002); assert.equal(row.port, 1538);
+        await h.service.operate(client.infobase, [client.id], 'connect');
+    }
+    assert.deepEqual(h.writes, []); assert.deepEqual(h.catalog(), [client]);
+});
+
+test('connect applies the saved port before launch and accepts automatic reassignment without rewriting saved settings', async () => {
+    const h = setup(); const connection = h.ports.connection();
+    h.ports.connection = () => ({ ...connection, port: true });
+    h.live([{ ...profile(), port: 48000 }]); await h.service.refresh();
+    h.runtime.apply = async (saved, acknowledged, expected) => {
+        assert.equal(acknowledged, true); assert.equal(expected?.port, 48000);
+        h.writes.push('apply:' + saved.port); h.live([{ ...profile(saved), port: saved.port }]);
+        return { applied: true, unsupportedFields: [] };
+    };
+    h.runtime.connect = async (name, expected) => {
+        assert.equal(expected?.port, 1538); h.writes.push('connect:' + name);
+        h.live([{ ...profile(), connected: true, port: 48002 }]);
+    };
+    await h.service.operate(client.infobase, [client.id], 'connect');
+    await h.service.refresh();
+    assert.equal(h.service.stateFor(client.infobase).rows[0].state, 'connected');
+    assert.deepEqual(h.writes, ['apply:1538', 'connect:Own']);
+    await h.service.operate(client.infobase, [client.id], 'disconnect');
+    assert.equal(h.service.stateFor(client.infobase).rows[0].state, 'outdated');
+    assert.deepEqual(h.catalog(), [client]);
+});
+
+test('editing the saved port takes effect on the next connection without changing a running client', async () => {
+    const h = setup(); const connection = h.ports.connection();
+    h.ports.connection = () => ({ ...connection, port: true });
+    h.live([{ ...profile(), connected: true, port: 48002 }]); await h.service.refresh();
+    await h.service.saveClient(client.infobase, client.id, { ...client, port: 1600 });
+    assert.equal(h.service.stateFor(client.infobase).rows[0].state, 'connected');
+    assert.deepEqual(h.writes, []);
+    await h.service.operate(client.infobase, [client.id], 'disconnect');
+    h.runtime.apply = async saved => {
+        h.writes.push('apply:' + saved.port); h.live([{ ...profile(saved), port: saved.port }]);
+        return { applied: true, unsupportedFields: [] };
+    };
+    await h.service.operate(client.infobase, [client.id], 'connect');
+    assert.deepEqual(h.writes, ['disconnect:Own', 'apply:1600', 'connect:Own']);
+    assert.equal(h.catalog()[0].port, 1600);
+});
+
+test('saving a disconnected client port applies it immediately without connecting', async () => {
+    const h = setup(); const connection = h.ports.connection();
+    h.ports.connection = () => ({ ...connection, port: true });
+    h.live([{ ...profile(), port: 1538 }]); await h.service.refresh();
+    h.runtime.apply = async (saved, acknowledged, expected) => {
+        assert.equal(acknowledged, true); assert.equal(expected?.port, 1538);
+        h.writes.push('apply:' + saved.port); h.live([{ ...profile(saved), port: saved.port }]);
+        return { applied: true, unsupportedFields: [] };
+    };
+    await h.service.saveClient(client.infobase, client.id, { ...client, port: 1600 });
+    await h.service.refresh();
+    const row = h.service.stateFor(client.infobase).rows[0];
+    assert.equal(row.port, 1600); assert.equal(row.remotePort, 1600);
+    assert.equal(row.state, 'added'); assert.equal(row.connected, false);
+    assert.deepEqual(h.writes, ['apply:1600']);
+    h.runtime.connect = async (name, expected) => {
+        assert.equal(expected?.port, 1600); h.writes.push('connect:' + name);
+        h.live([{ ...profile(), port: expected.port, connected: true }]);
+    };
+    await h.service.operate(client.infobase, [client.id], 'connect');
+    assert.deepEqual(h.writes, ['apply:1600', 'connect:Own']);
+    assert.equal(h.service.stateFor(client.infobase).rows[0].state, 'connected');
+    assert.equal(h.service.stateFor(client.infobase).rows[0].remotePort, 1600);
+});
+
+test('legacy profile saves apply supported settings and retain the local port without pretending to update it in VA', async () => {
+    const h = setup(); h.live([{ ...profile(), port: 48002 }]); await h.service.refresh();
+    await h.service.saveClient(client.infobase, client.id, { ...client, port: 1600 });
+    assert.deepEqual(h.writes, []);
+    await h.service.saveClient(client.infobase, client.id, { ...client, username: 'Changed', port: 1600 });
+    assert.deepEqual(h.writes, ['add:own']);
+    assert.equal(h.catalog()[0].port, 1600);
+    const row = h.service.stateFor(client.infobase).rows[0];
+    assert.equal(row.username, 'Changed'); assert.equal(row.connected, false); assert.equal(row.portUnsupported, true);
+});
+
+test('saving while VA is unavailable, busy or unable to edit profiles remains local', async () => {
+    for (const state of [{ ready: false }, { busy: true }, { read: false }, { write: false }]) {
+        const h = setup(); const connection = h.ports.connection();
+        h.live([profile()]); await h.service.refresh();
+        h.ports.connection = () => ({ ...connection, ...state });
+        await h.service.saveClient(client.infobase, client.id, { ...client, username: 'Changed' });
+        assert.equal(h.catalog()[0].username, 'Changed'); assert.deepEqual(h.writes, []);
+    }
+});
+
+test('saving never replaces conflicting profiles, renames an existing VA profile or changes a connected client', async () => {
+    for (const live of [[{ ...profile(), connected: true }], [{ ...profile(), connection: 'File="/foreign";' }], [profile(), profile()]]) {
+        const h = setup(); h.live(live); await h.service.refresh();
+        await h.service.saveClient(client.infobase, client.id, { ...client, username: 'Changed' });
+        assert.deepEqual(h.writes, []); assert.equal(h.catalog()[0].username, 'Changed');
+    }
+    const h = setup(); h.live([profile()]); await h.service.refresh();
+    await h.service.saveClient(client.infobase, client.id, { ...client, name: 'Renamed' });
+    assert.deepEqual(h.writes, []); assert.equal(h.catalog()[0].name, 'Renamed');
+});
+
+test('failed immediate application retains the saved settings and exposes the VA error without connecting', async () => {
+    const h = setup(); h.live([profile()]); await h.service.refresh();
+    h.runtime.apply = async () => { throw new VanessaClientControlError('The Vanessa client operation was not confirmed.', 'VA rejected the edit.'); };
+    await assert.rejects(h.service.saveClient(client.infobase, client.id, { ...client, username: 'Changed' }), /not confirmed/u);
+    assert.equal(h.catalog()[0].username, 'Changed'); assert.deepEqual(h.writes, []);
+    const view = h.service.stateFor(client.infobase);
+    assert.equal(view.rows[0].state, 'outdated'); assert.equal(view.errorDetails, 'VA rejected the edit.');
+});
+
+test('a changed session or saved client during immediate application rejects before any remote write', async () => {
+    for (const changed of ['session', 'catalog'] as const) {
+        const h = setup(); h.live([profile()]); await h.service.refresh();
+        h.ports.run = async work => {
+            if (changed === 'session') { h.changeSession(); }
+            else { await h.ports.store.updateCatalog(rows => rows.map(row => ({ ...row, username: 'Concurrent' }))); }
+            return work(h.runtime);
+        };
+        await assert.rejects(h.service.saveClient(client.infobase, client.id, { ...client, username: 'Changed' }), /changed/u);
+        assert.deepEqual(h.writes, []);
+    }
+});
+
+test('a port change during preflight is rejected and applying a launch port requires profile write capability', async () => {
+    const h = setup(); const connection = h.ports.connection();
+    h.ports.connection = () => ({ ...connection, port: true });
+    let reads = 0;
+    h.runtime.list = async () => [{ ...profile(), port: ++reads === 1 ? 1538 : 48002 }];
+    await assert.rejects(h.service.operate(client.infobase, [client.id], 'connect'), /profile changed/u);
+    assert.deepEqual(h.writes, []);
+    h.ports.connection = () => ({ ...connection, port: true, write: false });
+    await assert.rejects(h.service.operate(client.infobase, [client.id], 'connect'), /cannot add or edit/u);
+    assert.deepEqual(h.writes, []);
+});
+
+test('legacy sessions without port support keep connecting existing profiles without editing their ports', async () => {
+    const h = setup(); h.live([{ ...profile(), port: 48002 }]); await h.service.refresh();
+    await h.service.operate(client.infobase, [client.id], 'connect');
+    assert.deepEqual(h.writes, ['connect:Own']);
+    assert.equal(h.service.stateFor(client.infobase).rows[0].state, 'connected');
+});
+
+test('client action details survive the automatic refresh after a failed operation', async () => {
+    const h = setup(); h.live([profile()]); await h.service.refresh();
+    const detail = 'Your license SMUA has expired.';
+    h.runtime.connect = async () => { throw new VanessaClientControlError('The Vanessa client operation was not confirmed.', detail); };
+    await assert.rejects(h.service.operate(client.infobase, [client.id], 'connect'), error => error instanceof VanessaClientControlError && error.details === detail);
+    const view = h.service.stateFor(client.infobase);
+    assert.equal(view.error, 'The Vanessa client operation was not confirmed.');
+    assert.equal(view.errorDetails, detail);
+    await h.service.refresh(); assert.equal(h.service.stateFor(client.infobase).errorDetails, undefined);
 });

@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import type { VanessaFormExplorerSource } from './vanessaControlFormSource';
 import { formStepContext, formStepTarget, type VanessaFormStepResult } from './vanessaControlFormSteps';
 import * as vscode from 'vscode';
@@ -34,6 +35,8 @@ import {
     normalizeOneCClientExePath
 } from './oneCPlatform';
 
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
+
 type AdapterMode = 'auto' | 'manual' | 'unknown' | 'mcp';
 type PendingOperationKind = 'refresh' | 'table' | 'locator' | 'start';
 
@@ -64,6 +67,7 @@ interface FormExplorerWebviewState {
     suggestedStepsForPath: string | null;
     suggestedStepsError: string | null;
     nativeStepsAvailable: boolean;
+    elementChecksAvailable: boolean;
     nativeSteps: NativeStepsState;
     pendingOperation: PendingOperationKind | null;
 }
@@ -410,6 +414,12 @@ export class FormExplorerPanel implements vscode.Disposable {
             }
             case 'formChecks':
                 if (this.usesMcp()) { await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.formChecks'); } break;
+            case 'elementChecks': {
+                const name = this.latestSnapshot && this.selectedElementPath ? this.findElementByPath(this.latestSnapshot.elements, this.selectedElementPath)?.name : undefined;
+                const table = this.latestSnapshot && this.selectedElementPath ? formStepTarget(this.latestSnapshot, this.selectedElementPath)?.table?.name : undefined;
+                if (this.usesMcp() && this.mcpSource?.elementChecksAvailable && name) { await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.elementChecks', name, table); }
+                break;
+            }
             case 'openSourceLocation':
                 await this.openSourceLocation(message.source);
                 break;
@@ -499,7 +509,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         const snapshotPath = this.getEffectiveSnapshotPath();
         if (!snapshotPath) {
             const t = await getTranslator(this.context.extensionUri);
-            vscode.window.showWarningMessage(t('Snapshot path is not configured.'));
+            kotUi.showWarningMessage(t('Snapshot path is not configured.'));
             return;
         }
 
@@ -509,7 +519,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         } catch (error) {
             const t = await getTranslator(this.context.extensionUri);
             const message = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(t('Failed to open snapshot file: {0}', message));
+            kotUi.showErrorMessage(t('Failed to open snapshot file: {0}', message));
         }
     }
 
@@ -517,7 +527,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         const snapshotPath = this.getEffectiveSnapshotPath();
         if (!snapshotPath) {
             const t = await getTranslator(this.context.extensionUri);
-            vscode.window.showWarningMessage(t('Snapshot path is not configured.'));
+            kotUi.showWarningMessage(t('Snapshot path is not configured.'));
             return;
         }
 
@@ -527,7 +537,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         } catch (error) {
             const t = await getTranslator(this.context.extensionUri);
             const message = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(t('Failed to reveal snapshot file: {0}', message));
+            kotUi.showErrorMessage(t('Failed to reveal snapshot file: {0}', message));
         }
     }
 
@@ -549,7 +559,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         } catch (error) {
             const t = await getTranslator(this.context.extensionUri);
             const message = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(t('Failed to open source location: {0}', message));
+            kotUi.showErrorMessage(t('Failed to open source location: {0}', message));
         }
     }
 
@@ -1171,7 +1181,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         const modeRequestPath = this.getAdapterModeRequestPath();
         const requestContextPath = this.getAdapterRequestContextPath();
         if (!modeRequestPath) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 t('Form Explorer generated artifacts directory is not configured. Set kotTestToolkit.formExplorer.generatedArtifactsDirectory.')
             );
             return false;
@@ -1191,7 +1201,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             await fs.promises.writeFile(modeRequestPath, `${requestCode}\n`, 'utf8');
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(t('Failed to write Form Explorer mode request: {0}', message));
+            kotUi.showErrorMessage(t('Failed to write Form Explorer mode request: {0}', message));
             return false;
         }
 
@@ -1273,7 +1283,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             this.pendingOperation = null;
             this.lastError = previousError;
             await this.postState();
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 t('Form Explorer session is still running. Close the current 1C windows first.')
             );
             return;
@@ -1374,7 +1384,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             { label: vscode.l10n.t('Vanessa MCP'), value: 'mcp' },
             { label: vscode.l10n.t('Snapshot bridge'), value: 'snapshot' }
         ];
-        const selected = await vscode.window.showQuickPick(items, { title: vscode.l10n.t('Form Explorer data source') });
+        const selected = await kotUi.showQuickPick(items, { title: vscode.l10n.t('Form Explorer data source') });
         if (selected) { await vscode.workspace.getConfiguration('kotTestToolkit.formExplorer').update('source', selected.value, vscode.ConfigurationTarget.Workspace); }
     }
 
@@ -1386,10 +1396,10 @@ export class FormExplorerPanel implements vscode.Disposable {
         this.choosingClientWindow = true;
         try {
             await this.postState();
-            await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Vanessa: selecting client window…') }, async () => {
+            await kotUi.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Vanessa: selecting client window…') }, async () => {
                 const windows = await source.windows();
                 if (!windows || !current()) { return; }
-                const title = await vscode.window.showQuickPick([...windows.titles], { title: vscode.l10n.t('Select an internal test-client window'), ignoreFocusOut: true });
+                const title = await kotUi.showQuickPick([...windows.titles], { title: vscode.l10n.t('Select an internal test-client window'), ignoreFocusOut: true });
                 if (!title || !current()) { return; }
                 const snapshot = await source.activateWindow(windows, title);
                 if (!current()) { return; }
@@ -1592,6 +1602,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             suggestedStepsForPath: this.suggestedStepsForPath,
             suggestedStepsError: this.suggestedStepsError,
             nativeStepsAvailable: this.usesMcp() && !!this.latestSnapshot && !!this.readNativeSteps,
+            elementChecksAvailable: this.usesMcp() && !!this.mcpSource?.elementChecksAvailable,
             nativeSteps: this.nativeSteps,
             pendingOperation: this.pendingOperation?.kind || null
         };
@@ -1720,6 +1731,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             readingNativeSteps: t('Reading Vanessa steps…'),
             nativeStepsUnavailable: t('Select a visible field, button or table column to read Vanessa steps.'),
             nativeFormChecks: t('Insert full form checks'),
+            nativeElementChecks: t('Get checks for this element'),
             suggestedStepsDescription: t('Recommended steps for the selected element from the connected Gherkin steps library.'),
             noSuggestedSteps: t('No suitable steps found for the selected element.'),
             suggestedStepsLoading: t('Preparing step suggestions...'),

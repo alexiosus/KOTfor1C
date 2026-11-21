@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import {
@@ -10,6 +11,8 @@ import {
 import { parseExportScenarios } from './exportScenarioParser';
 import type { ScenarioLanguage } from './gherkinDefinitionKeywords';
 import type { ProjectDefinitionIndexProvider } from './projectDefinitionIndexService';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 export interface ExportScenarioLibraryRoot {
     readonly uri: string;
@@ -57,7 +60,7 @@ async function promptParameterNames(
     const values = extractExportScenarioQuotedValues(title);
     const result: string[] = [];
     for (let index = 0; index < values.length; index++) {
-        const entered = await vscode.window.showInputBox({
+        const entered = await kotUi.showInputBox({
             title: t('Export scenario parameter {0}', String(index + 1)),
             value: suggestedExportScenarioParameterName(values[index].value, index),
             prompt: t('Enter the parameter name for quoted value "{0}".', values[index].value),
@@ -93,7 +96,7 @@ export async function createExportScenarioCommand(
     const roots = await services.loadLibraryRoots(resource?.toString());
     if (roots.length === 0) {
         const action = t('Open active profile parameters');
-        const selected = await vscode.window.showWarningMessage(
+        const selected = await kotUi.showWarningMessage(
             t('No project library roots are configured in the active profile.'),
             action
         );
@@ -154,7 +157,7 @@ export async function createExportScenarioCommand(
     }
 
     const draft = deriveExportScenarioDraft(seed);
-    const enteredTitle = await vscode.window.showInputBox({
+    const enteredTitle = await kotUi.showInputBox({
         title: t('Export scenario title'),
         value: draft.title,
         prompt: t('Enter the callable Gherkin text without Given, When, Then or And.'),
@@ -181,7 +184,7 @@ export async function createExportScenarioCommand(
         if (roots.length === 1) {
             root = roots[0];
         } else {
-            const selectedRoot = await vscode.window.showQuickPick(
+            const selectedRoot = await kotUi.showQuickPick(
                 roots.map(item => ({ label: item.label, detail: item.uri, root: item })),
                 { title: t('Select project library root'), ignoreFocusOut: true }
             );
@@ -190,7 +193,7 @@ export async function createExportScenarioCommand(
             }
             root = selectedRoot.root;
         }
-        const selectedLanguage = await vscode.window.showQuickPick([
+        const selectedLanguage = await kotUi.showQuickPick([
             { label: 'Русский', language: 'ru' as const },
             { label: 'English', language: 'en' as const }
         ], { title: t('Select export feature language'), ignoreFocusOut: true });
@@ -198,7 +201,7 @@ export async function createExportScenarioCommand(
             return;
         }
         language = selectedLanguage.language;
-        const fileName = await vscode.window.showInputBox({
+        const fileName = await kotUi.showInputBox({
             title: t('Export feature file name'),
             value: 'export-scenarios.feature',
             ignoreFocusOut: true,
@@ -209,7 +212,7 @@ export async function createExportScenarioCommand(
         if (!fileName) {
             return;
         }
-        featureTitle = await vscode.window.showInputBox({
+        featureTitle = await kotUi.showInputBox({
             title: t('Feature title'),
             value: language === 'ru' ? 'Экспортные сценарии' : 'Exported scenarios',
             ignoreFocusOut: true,
@@ -221,7 +224,7 @@ export async function createExportScenarioCommand(
         targetUri = vscode.Uri.joinPath(vscode.Uri.parse(root.uri), fileName.trim());
         try {
             await vscode.workspace.fs.stat(targetUri);
-            vscode.window.showErrorMessage(t('File already exists: {0}', targetUri.fsPath));
+            kotUi.showErrorMessage(t('File already exists: {0}', targetUri.fsPath));
             return;
         } catch {
             // The new target must not exist.
@@ -241,7 +244,7 @@ export async function createExportScenarioCommand(
         language = parsed.language;
         if (!parsed.feature?.hasExportTag) {
             const add = t('Add @ExportScenarios');
-            const answer = await vscode.window.showWarningMessage(
+            const answer = await kotUi.showWarningMessage(
                 t('The selected feature is not tagged @ExportScenarios. Add the tag?'),
                 { modal: true },
                 add
@@ -275,7 +278,7 @@ export async function createExportScenarioCommand(
     });
 
     if (document && document.version !== plan.documentVersion) {
-        vscode.window.showWarningMessage(t('The export feature changed. Run the command again.'));
+        kotUi.showWarningMessage(t('The export feature changed. Run the command again.'));
         return;
     }
     const edit = new vscode.WorkspaceEdit();
@@ -292,7 +295,7 @@ export async function createExportScenarioCommand(
         }
     }
     if (!await vscode.workspace.applyEdit(edit)) {
-        vscode.window.showErrorMessage(t('Could not create the exported scenario.'));
+        kotUi.showErrorMessage(t('Could not create the exported scenario.'));
         return;
     }
     const updated = await vscode.workspace.openTextDocument(targetUri);

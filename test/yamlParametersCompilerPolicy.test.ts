@@ -1,3 +1,5 @@
+import * as nativeRedaction from '../src/vanessaControlRedaction';
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -8,6 +10,7 @@ import * as activeProfiles from '../src/activeYamlParametersProfile';
 import * as defaults from '../src/yamlParameterDefaults';
 import * as compilerParameters from '../src/compilerBuildParameters';
 import * as compilerValueValidation from '../src/compilerBuildValueValidation';
+import * as parameterPaths from '../src/yamlParameterPaths';
 
 interface Parameter { key: string; value: string }
 interface TestManager {
@@ -30,6 +33,8 @@ function createManager(buildParameters: unknown[], showDriveFeatures = false, co
     vm.runInNewContext(compiled, {
         module: moduleObject, exports: moduleObject.exports, console: { ...console, error() {} }, Buffer, process,
         require: (specifier: string) => {
+            if (specifier === './vanessaControlRedaction') { return nativeRedaction; }
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === 'vscode') {
                 return { EventEmitter: class { event = () => ({ dispose() {} }); fire() {} dispose() {} },
                     workspace: { workspaceFolders: [{ uri: { fsPath: '/project' } }], getConfiguration: () => ({
@@ -42,6 +47,7 @@ function createManager(buildParameters: unknown[], showDriveFeatures = false, co
             if (specifier === './yamlParameterDefaults') { return defaults; }
             if (specifier === './compilerBuildParameters') { return compilerParameters; }
             if (specifier === './compilerBuildValueValidation') { return compilerValueValidation; }
+            if (specifier === './yamlParameterPaths') { return parameterPaths; }
             if (specifier === './activeYamlParametersProfile') { return activeProfiles; }
             return require(specifier);
         }
@@ -126,8 +132,8 @@ test('compiler JSON preserves metadata, connection strings and command arguments
 
 test('compiler JSON resolves directory parameters even when they contain no separator', async () => {
     const payload = await writePayload(createManager([]), launchParameters);
-    assert.equal(payload.ScenarioFolder, '/project/tests');
-    assert.equal(payload.FeatureFolder, '/project/features');
+    assert.equal(payload.ScenarioFolder, path.resolve('/project', 'tests'));
+    assert.equal(payload.FeatureFolder, path.resolve('/project', 'features'));
 });
 
 test('stored profiles preserve both launch connection roles', async () => {

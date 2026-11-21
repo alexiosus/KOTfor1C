@@ -45,7 +45,7 @@
     "steps": {
       "patterns": [
         {
-          "match": "^([ \\t]*)(\\*\\s*)?(Given|When|Then|And|But|If|Дано|Допустим|Когда|Тогда|И|Но|К тому же|Если)(?=\\s)",
+          "match": "^([ \\t]*)(\\*\\s*)?(Given|When|Then|And|But|If|Дано|Затем|Пусть|То|А|Также|Иначе|Допустим|Когда|Тогда|И|Но|К тому же|Если)(?=\\s)",
           "captures": {
             "2": { "name": "keyword.other.feature" },
             "3": { "name": "keyword.other.feature" }

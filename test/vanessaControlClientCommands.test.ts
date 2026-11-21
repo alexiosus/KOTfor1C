@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
@@ -48,6 +49,7 @@ function harness(choices: Array<string | undefined>, openCatalog?: (path?: strin
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/vanessaControlClientCommands.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
     }).outputText, { module, exports: module.exports, require: (name: string) => {
+            if (name === './kotInteraction') { return nativeInteraction; }
         if (name === 'vscode') {
             return { window, l10n: { t: (message: string) => message }, ProgressLocation: { Notification: 15 }, commands: {
                 registerCommand: (name: string, registered: () => Promise<void>) => { commands.set(name, registered); command = registered; return { dispose() {} }; }

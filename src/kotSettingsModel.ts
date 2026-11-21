@@ -5,7 +5,7 @@ import type { SettingSchema } from './kotSettingsSession';
 export interface SettingsPresentation {
     key: string; label: string; labelEn: string; section: string; advanced?: boolean; compatibility?: boolean;
     editor?: string; hint?: string; placeholder?: string; inheritsFrom?: string; preferredScope?: string;
-    optionLabels?: string[]; itemEnum?: string[]; choiceLabels?: string[]; pathKind?: string; pathPolicy?: 'relative' | 'absolute' | 'project';
+    optionLabels?: string[]; optionLabelsEn?: string[]; itemEnum?: string[]; choiceLabels?: string[]; pathKind?: string; pathPolicy?: 'relative' | 'absolute' | 'project';
 }
 export interface SettingsDefinition extends SettingSchema, SettingsPresentation { description: string; configScope?: string; manager?: string }
 export interface KotSettingsModel {
@@ -29,8 +29,8 @@ export async function loadKotSettingsModel(extensionPath: string, russian: boole
         const item = labels.get(key);
         if (!item) { throw new Error(`Missing settings presentation: ${key}`); }
         return { ...schema, ...item, key, label: russian ? item.label : item.labelEn, configScope: schema.scope ?? 'window',
-            secret: key === 'kotTestToolkit.ai.apiKey', description: localize(schema.markdownDescription ?? schema.description),
-            hint: russian ? item.hint : undefined, optionLabels: russian ? item.optionLabels : undefined,
+            description: localize(schema.markdownDescription ?? schema.description),
+            hint: russian ? item.hint : undefined, optionLabels: russian ? item.optionLabels : item.optionLabelsEn,
             manager: settingsManagers[key] };
     });
     return { sections: presentation.sections.map((section: { id: string; title: string; titleEn: string; description: string }) => ({

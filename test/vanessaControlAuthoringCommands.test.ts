@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -54,14 +55,14 @@ function harness(formatChecks?: (text: string) => Promise<string>) {
     const sourceFilesModule = { exports: {} as any };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/spprScenarioFiles.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
         { module: sourceFilesModule, exports: sourceFilesModule.exports, Buffer,
-            require: (name: string) => name === 'vscode' ? vscode : name === 'node:path' ? path : {} });
+            require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === 'vscode' ? vscode : name === 'node:path' ? path : {}) });
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/vanessaControlAuthoringCommands.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
-        { module, exports: module.exports, require: (name: string) => name === 'vscode' ? vscode : name === './spprScenarioFiles' ? sourceFilesModule.exports : name.endsWith('Authoring') ? authoring : insertion });
+        { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === 'vscode' ? vscode : name === './spprScenarioFiles' ? sourceFilesModule.exports : name.endsWith('Authoring') ? authoring : insertion) });
     const session: any = { snapshot: { generation: 1, capabilities: { recording: { supported: true } } },
         onDidChange: (listener: () => void) => { listeners.push(listener); return { dispose() {} }; },
         withAuthoringControl: async (work: any) => work({ start: async () => ({ generation: session.snapshot.generation, client: 'own' }), stop: async () => 'И я нажимаю кнопку "Own"', formSteps: async () => 'And own form check' }) };
-    module.exports.registerVanessaAuthoringCommands({ subscriptions: [] }, session, async () => true, formatChecks);
-    return { session, listeners, contexts, window, document, editor, errors, edits, progress, output, files, workspace: vscode.workspace,
+    const api = module.exports.registerVanessaAuthoringCommands({ subscriptions: [] }, session, async () => true, formatChecks);
+    return { api, session, listeners, contexts, window, document, editor, errors, edits, progress, output, files, workspace: vscode.workspace,
         setSource: (file: string, text: string, line: number, character: number) => {
             documents.delete(document.uri.toString()); document.uri = uri('file://' + file); document.text = text;
             document.languageId = file.endsWith('.feature') ? 'feature' : 'yaml';
@@ -77,6 +78,17 @@ test('form-generated steps appear in the bottom output without modifying the sce
     assert.equal(h.output.text, 'And own form check'); assert.equal(h.output.shown, true); assert.equal(h.edits.length, 0);
     assert.equal(h.contexts.get('kotTestToolkit.vanessaDraftAvailable'), true);
     await h.run('insertHere'); assert.equal(h.edits.length, 1);
+});
+
+test('the API reads the shared generated buffer without consuming it and retains the last inserted result', async () => {
+    const h = harness(); await h.generate();
+    assert.equal(h.api.read().pending, 'And own form check');
+    assert.equal(h.api.read().pending, 'And own form check');
+    await h.run('insertHere');
+    assert.equal(h.api.read().pending, null); assert.equal(h.api.read().lastResult, 'And own form check');
+    await h.run('start'); assert.equal(h.api.read().recording, true);
+    await h.run('stop');
+    assert.equal(h.api.read().recording, false); assert.equal(h.api.read().lastResult, 'И я нажимаю кнопку "Own"');
 });
 
 test('recording inserts directly at the current scenario without a preview or a pending-draft gate', async () => {

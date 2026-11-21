@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import { isUserStepAvailable } from '../src/projectDefinition';
 import * as parameterUtils from '../src/scenarioParameterUtils';
 import assert from 'node:assert/strict';
@@ -106,6 +107,7 @@ function loadProvider(fileName: string): Record<string, unknown> {
         module: moduleObject,
         exports: moduleObject.exports,
         require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === './projectDefinition') { return { isUserStepAvailable }; }
             if (specifier === './spprScenarioFiles.js') { return { readNativeScenarioMetadata: async () => ({ uri: { toString: () => 'file:///repo/meta.yaml' }, text: 'ТипФайла: Сценарий\nПараметрыСценария:\n    - ПараметрыСценария1:\n        Имя: Amount\n        Значение: 42\n' }) }; }
             if (specifier === './scenarioParameterUtils') { return parameterUtils; }

@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -12,6 +13,8 @@ import { assertProjectMetadataSaved, projectLibraryEnvironment } from './project
 import { getCachedProjectLibrarySnapshot, resolveProjectLibraryRoot } from './projectLibraryMetadata';
 import { getTranslator } from './localization';
 import { loadProjectSystemFunctions, projectSystemFunctionStore } from './projectSystemFunctions';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 export interface ScenarioPropertiesCatalogs {
     projects: string[];
@@ -220,7 +223,7 @@ export async function runScenarioPropertiesCatalogAction(context: vscode.Extensi
             return result(matches[0]);
         }
         const label = request.kind === 'category' ? t('Enter category name') : t('Enter {0}', request.kind === 'project' ? 'Проект' : simpleFieldKeys[request.kind as keyof typeof simpleFieldKeys]);
-        const value = await vscode.window.showInputBox({ prompt: label, ignoreFocusOut: true,
+        const value = await kotUi.showInputBox({ prompt: label, ignoreFocusOut: true,
             validateInput: value => { try { validatePropertyCatalogName(value); return undefined; } catch { return t('Enter a nonempty single-line name.'); } } });
         if (value === undefined) { return undefined; }
         await request.prepareWrite?.();
@@ -281,7 +284,7 @@ export async function runScenarioPropertiesCatalogAction(context: vscode.Extensi
         else {
             const choices = state.bases.flatMap(base => { try { uniqueBase(state.bases, base.databaseId); return [{ label: base.name, description: base.databaseId, id: base.databaseId }]; } catch { return []; } });
             if (!choices.length) { throw new Error('Create an reference infobase before creating its user profile.'); }
-            const selected = await vscode.window.showQuickPick(choices, { title: t('Reference infobase'), ignoreFocusOut: true });
+            const selected = await kotUi.showQuickPick(choices, { title: t('Reference infobase'), ignoreFocusOut: true });
             if (!selected) { return undefined; }
             request.assertCurrent?.(); base = uniqueBase(state.bases, selected.id);
         }

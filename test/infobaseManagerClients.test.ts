@@ -1,8 +1,10 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
 import * as clientService from '../src/vanessaInfobaseClients';
+import * as runtimeClients from '../src/vanessaControlClients';
 import { normalizeInfobaseConnectionIdentity } from '../src/oneCInfobaseConnection';
 
 test('full manager binds client actions to an existing base and updates clients without a base rescan', async () => {
@@ -12,13 +14,14 @@ test('full manager binds client actions to an existing base and updates clients 
     const dependencies: Record<string, unknown> = {
         vscode: { workspace: { onDidChangeConfiguration: noop }, commands: { executeCommand: async () => undefined } },
         './vanessaInfobaseClients': clientService,
+        './vanessaControlClients': runtimeClients,
         './infobaseRuntimeTracker': { managedInfobaseRuntimeTracker: { onDidChange: noop, runningIdentities: () => new Set() } },
         './oneCInfobaseConnection': { normalizeInfobaseConnectionIdentity },
         './localization': { getTranslator: async () => (message: string) => message }
     };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/infobaseManagerPanel.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-    }).outputText, { module, exports: module.exports, require: (name: string) => dependencies[name] ?? {} });
+    }).outputText, { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name] ?? {}) });
     const service = { onDidInvalidate: noop, refresh: async () => { scans++; }, ensureReady: async () => { scans++; } };
     const panel = new module.exports.InfobaseManagerPanel({ workspaceState: { get: () => undefined } }, service, {
         service: { onDidChange: noop, stateFor: (base: string) => ({ rows: [], base }) },
@@ -44,4 +47,10 @@ test('full manager binds client actions to an existing base and updates clients 
     release({ password: 'private' }); await reading;
     assert.ok(!replacementMessages.some(message => message.command === 'clientEditor'));
     assert.ok(!JSON.stringify(replacementMessages).includes('private'));
+    panel.clients.service.stateFor = () => ({ rows: [], error: 'The Vanessa client operation was not confirmed.', errorDetails: 'Your license SMUA has expired.' });
+    await panel.handleMessage({ command: 'clientRefresh', infobasePath: 'C:\\QA' });
+    assert.match(replacementMessages.at(-1).state.vanessaClients.error, /Your license SMUA has expired\./u);
+    panel.clients.handle = async () => { throw new clientService.VanessaInfobaseClientError('The Vanessa client operation was not confirmed.', 'Your license SMUA has expired.'); };
+    await panel.handleMessage({ command: 'clientRefresh', infobasePath: 'C:\\QA' });
+    assert.match(replacementMessages.at(-1).state.lastError, /Your license SMUA has expired\./u);
 });

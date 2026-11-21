@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" version="2.4">
+  <ExternalDataProcessor uuid="079ce3d8-f1ae-40c1-b19a-fc9cfe40f82e">
+    <InternalInfo>
+      <xr:ContainedObject><xr:ClassId>c3831ec8-d8d5-4f93-8a22-f9bfae07327f</xr:ClassId><xr:ObjectId>65cba1b1-496b-4d2f-8fd3-00df5dd4ada2</xr:ObjectId></xr:ContainedObject>
+      <xr:GeneratedType name="ExternalDataProcessorObject.KOTMxlViewer" category="Object"><xr:TypeId>699c60a2-9810-473c-abff-30f1132c405b</xr:TypeId><xr:ValueId>0d082fde-01b7-4c25-8d7d-458d8aee58db</xr:ValueId></xr:GeneratedType>
+    </InternalInfo>
+    <Properties><Name>KOTMxlViewer</Name><Synonym/><Comment/><DefaultForm>ExternalDataProcessor.KOTMxlViewer.Form.Viewer</DefaultForm><AuxiliaryForm/></Properties>
+    <ChildObjects><Form>Viewer</Form></ChildObjects>
+  </ExternalDataProcessor>
+</MetaDataObject>

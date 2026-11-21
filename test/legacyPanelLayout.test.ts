@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -34,7 +35,7 @@ test('selected-infobase actions are grouped by purpose without losing or duplica
     const source = read('src/infobaseManagerPanel.ts');
     const ts = require('typescript') as typeof import('typescript'); const module = { exports: {} as any };
     vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
-        { module, exports: module.exports, require: (name: string) => name === 'vscode' ? { Uri: { joinPath: (_base: unknown, ...parts: string[]) => parts.join('/') } } : name === './localization' ? { getTranslator: async () => (text: string) => text } : {} });
+        { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === 'vscode' ? { Uri: { joinPath: (_base: unknown, ...parts: string[]) => parts.join('/') } } : name === './localization' ? { getTranslator: async () => (text: string) => text } : {}) });
     const panel = Object.create(module.exports.InfobaseManagerPanel.prototype); panel.context = { extensionUri: {} }; panel.buildState = () => ({});
     const markup = await panel.getWebviewHtml({ asWebviewUri: (value: string) => value, cspSource: 'self' });
     const grid = parse(markup).querySelector('.action-grid')!;

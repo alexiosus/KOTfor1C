@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,7 +22,7 @@ function fixture(multiRoot = false, workspaceFile = multiRoot, afterUpdate?: (la
     const ts = require('typescript') as typeof import('typescript'); const module = { exports: {} };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(process.cwd(), 'src/kotWorkspaceConfiguration.ts'), 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-    }).outputText, { module, exports: module.exports, require: (name: string) => name === 'vscode' ? host : settings });
+    }).outputText, { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === 'vscode' ? host : settings) });
     const api = module.exports as { createWorkspaceSettingsSession(model: unknown): settings.SettingsDraftSession };
     return { session: api.createWorkspaceSettingsSession({ settings: [{ key: 'kotTestToolkit.language', type: 'string', configScope: 'resource' }] }), layers, targets };
 }

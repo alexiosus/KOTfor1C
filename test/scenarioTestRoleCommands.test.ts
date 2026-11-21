@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import * as projectFormatModule from '../src/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -45,7 +46,7 @@ function harness(t: test.TestContext, process = false) {
         './localization': { getTranslator: async () => (message: string, ...args: string[]) => message.replace(/\{(\d+)\}/gu, (_, index) => args[Number(index)] ?? '') }
     };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/scenarioTestRoleCommands.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
-        { module, exports: module.exports, require: (name: string) => dependencies[name] ?? require(name) });
+        { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name] ?? require(name)) });
     return { root, metadata, script, setting, dirty, notifications, commands, refreshes, api: module.exports,
         cancelCreation: () => { cancelCreation = true; },
         onRead: (callback:(count:number)=>void) => {onRead=callback;},

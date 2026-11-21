@@ -8,6 +8,7 @@ test('webview cannot choose an arbitrary command or an unregistered project fold
     assert.throws(() => parseKotWorkspaceRequest({ id: '2', type: 'scan', folder: 'file:///first' }, folders));
     const request = parseKotWorkspaceRequest({ id: '3', type: 'action', action: 'library', folder: 'file:///second' }, folders);
     assert.equal(workspaceActions[request.action!], 'kotTestToolkit.openStepLibrary');
+    assert.equal(workspaceActions[parseKotWorkspaceRequest({ id: '4', type: 'action', action: 'agent' }, folders).action!], 'kotTestToolkit.agent.setup');
 });
 
 test('settings-only opening and explicit setup use distinct, validated entry routes', () => {

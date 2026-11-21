@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import { v3FixtureSync } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -77,6 +78,7 @@ async function harness(t: test.TestContext) {
     const runtime: Record<string, unknown> = {
         module: moduleObject, exports: moduleObject.exports, console, Buffer,
         require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             switch (specifier) {
                 case 'uuid': return { v4 };
                 case 'vscode': return {

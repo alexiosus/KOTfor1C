@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -54,7 +55,7 @@ async function fixture(t: test.TestContext) {
     const code = await fs.readFile(path.join(process.cwd(), 'src/scenarioIdentityFiles.ts'), 'utf8');
     const dependencies: Record<string, unknown> = { vscode: host, './scenarioNativeDocumentSnapshot': snapshots, './scenarioYamlDocument': yaml, './preparedFileWrites': prepared };
     vm.runInNewContext(ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
-        { module, exports: module.exports, Buffer, console, setTimeout, clearTimeout, require: (name: string) => dependencies[name] ?? require(name) });
+        { module, exports: module.exports, Buffer, console, setTimeout, clearTimeout, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name] ?? require(name)) });
     const prepare = (overrides: Record<string, unknown> = {}) => module.exports.prepareScenarioIdentityFileChanges({ sourceUri: uri(source), uid: 'scenario', oldCode: '001', code: '002', relatedUris: [uri(settings), uri(custom)], definitionUris: [uri(source)], protectedDirectories: [root], ...overrides });
     return { root, directory, source, settings, custom, before, document, documents, moves, prepare, uri,
         failAfter(count: number, callback?: () => Promise<void>) { failAfter = count; duringFailure = callback; } };

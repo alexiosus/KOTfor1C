@@ -303,17 +303,25 @@ export class ScenarioFilesService implements ScenarioFilesDisposable {
 
     async openExternal(item: StepLibraryItem, relativePath: string): Promise<boolean> {
         try {
+            const uri = await this.resolveAttachmentUri(item, relativePath);
+            return uri ? await this.host.openExternal(uri) : false;
+        } catch { return false; }
+    }
+
+    async resolveAttachmentUri(item: StepLibraryItem, relativePath: string): Promise<ScenarioFilesUri | undefined> {
+        try {
             const normalized = this.requireRelativePath(relativePath);
             if (!normalized) {
-                return false;
+                return;
             }
             const root = await this.resourceRootForPath(item, normalized);
             if (!await this.existingResourcePathIsSafe(root, normalized)) {
-                return false;
+                return;
             }
-            return await this.host.openExternal(this.resourceUri(root, normalized));
+            const uri = this.resourceUri(root, normalized);
+            return (await this.tryLstat(fileURLToPath(uri.toString())))?.isFile() ? uri : undefined;
         } catch {
-            return false;
+            return;
         }
     }
 

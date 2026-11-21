@@ -1,3 +1,4 @@
+import { localFileUri } from './helpers/filePaths';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
@@ -13,10 +14,10 @@ function source(text: string) {
     return {
         text,
         version: 12,
-        sourceUri: 'file:///workspace/libraries/exports.feature',
-        workspaceFolderUri: 'file:///workspace',
+        sourceUri: localFileUri("/workspace/libraries/exports.feature"),
+        workspaceFolderUri: localFileUri("/workspace"),
         profileId: 'active',
-        libraryRootUri: 'file:///workspace/libraries',
+        libraryRootUri: localFileUri("/workspace/libraries"),
         sourceLabel: 'Project exports',
         defaultLanguage: 'en' as const
     };
@@ -52,7 +53,7 @@ test('offers CodeLens actions only for missing metadata on exported scenarios', 
             line: 5,
             kind: 'description',
             version: 12,
-            uri: 'file:///workspace/libraries/exports.feature'
+            uri: localFileUri("/workspace/libraries/exports.feature")
         },
         {
             title: 'T:+ Usage example',
@@ -60,7 +61,7 @@ test('offers CodeLens actions only for missing metadata on exported scenarios', 
             line: 5,
             kind: 'usageExample',
             version: 12,
-            uri: 'file:///workspace/libraries/exports.feature'
+            uri: localFileUri("/workspace/libraries/exports.feature")
         }
     ]);
 });
@@ -78,8 +79,8 @@ test('collects sorted unique export-scenario categories case-insensitively', () 
 });
 
 test('uses live current-document categories instead of stale indexed categories reached through an alias', async () => {
-    const editorUri = 'file:///alias/exports.feature';
-    const physicalUri = 'file:///physical/exports.feature';
+    const editorUri = localFileUri("/alias/exports.feature");
+    const physicalUri = localFileUri("/physical/exports.feature");
     const currentUri = await canonicalizeExportScenarioDocumentUri(
         '/alias/exports.feature',
         editorUri,
@@ -94,7 +95,7 @@ test('uses live current-document categories instead of stale indexed categories 
         {
             kind: 'exportScenario' as const,
             category: 'Forms',
-            definitionLocation: { uri: 'file:///workspace/other.feature' }
+            definitionLocation: { uri: localFileUri("/workspace/other.feature") }
         }
     ];
 
@@ -107,7 +108,7 @@ test('uses live current-document categories instead of stale indexed categories 
 });
 
 test('keeps the editor URI when resolving its physical path fails', async () => {
-    const editorUri = 'file:///missing/exports.feature';
+    const editorUri = localFileUri("/missing/exports.feature");
     assert.equal(await canonicalizeExportScenarioDocumentUri(
         '/missing/exports.feature',
         editorUri,

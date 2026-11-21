@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import * as editorActionControls from '../src/editorActionControls';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -34,7 +35,7 @@ function harness() {
     const module = { exports: {} as typeof import('../src/scenarioPropertiesEditorIntegration') };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(process.cwd(), 'src/scenarioPropertiesEditorIntegration.ts'), 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-    }).outputText, { module, exports: module.exports, require: (name: string) => dependencies[name], console });
+    }).outputText, { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name]), console });
     const context = { subscriptions: [] as { dispose(): void }[] };
     module.exports.registerScenarioPropertiesEditor(context as any, { renameScenario: async () => undefined });
     return { source, opened, commands, registrations, errors, setActions: (value: boolean) => { showActions = value; } };

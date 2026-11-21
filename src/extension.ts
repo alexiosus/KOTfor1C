@@ -1,3 +1,4 @@
+import { kotWindow, assertKotPath, hasKotInteraction } from './kotInteraction';
 import { refreshProjectBranch } from './projectBranchRefresh';
 import { permitsNativeScenario, setProjectFormatTranslator } from './projectFormat';
 import { registerMetadataConflictCommand } from './projectMetadataConflictCommand';
@@ -5,7 +6,10 @@ import { getGherkinInsertionContext } from './gherkinInsertionContext';
 import { readNativeScenarioMetadata } from './spprScenarioFiles';
 import { KotWorkspacePanel } from './kotWorkspacePanel';
 import { registerVanessaFormToolCommands } from './vanessaControlFormToolCommands';
+import { registerAgentExtension } from './agentExtension';
+import { createAgentNativeActions } from './agentNativeActions';
 import { registerVanessaAuthoringCommands } from './vanessaControlAuthoringCommands';
+import { registerVanessaSettingsCommands } from './vanessaControlSettingsCommands';
 import { registerVanessaDiagnosticsCommands } from './vanessaControlDiagnosticsCommands';
 import { enrichFormExplorerSnapshot } from './formExplorerEnrichment';
 import { getFormExplorerSnapshotPath } from './formExplorerPaths';
@@ -30,6 +34,8 @@ import { promisify } from 'node:util';
 import { DriveCompletionProvider } from './completionProvider';
 import { DriveHoverProvider } from './hoverProvider';
 import { StepCatalogService } from './stepCatalogService';
+import { registerLocalStepCatalogCommands, generateConfiguredLocalStepCatalog } from './localStepCatalogCommands';
+import { registerSpprCompilerExportCommand } from './spprCompilerExportCommands';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
 import { StandaloneFeatureService } from './standaloneFeatureService';
 import { registerVanessaControl } from './vanessaControlConnection';
@@ -46,10 +52,6 @@ import { createVanessaYamlControl } from './vanessaControlYamlCommands';
 import { registerVanessaYamlTrialCommand } from './vanessaControlYamlTrialCommands';
 import { ProjectFeatureTagCatalog } from './projectFeatureTags';
 import {
-    openMxlFileFromTextHandler,
-    openMxlFileFromExplorerHandler,
-    revealFileInExplorerHandler,
-    revealFileInOSHandler,
     openCurrentScenarioFilesFolderHandler,
     openSubscenarioHandler,
     openNestedScenarioFromFeatureHandler,
@@ -93,15 +95,7 @@ import {
 } from './scenarioSyntaxHighlightProvider';
 import { isScenarioYamlFile, isCompilerYamlFile, isProcessYamlFile, isProcessTestSettingsYamlFile } from './yamlValidator';
 import { ScenarioHeaderInlayHintsProvider } from './scenarioHeaderInlayHintsProvider';
-import {
-    handleGenerateConfigurationDiffImpactReport,
-    openSavedConfigurationDiffImpactReport
-} from './configurationDiffAiReport';
-import { handleGenerateScenarioDescriptionWithAi } from './scenarioAiDescription';
-import {
-    handleReviewChangedTestsWithAi,
-    openSavedTestReviewReport
-} from './testReviewAiReport';
+import { openSavedConfigurationDiffImpactReport, openSavedTestReviewReport } from './savedAiReports';
 import type {
     BuildFormExplorerExtensionCommandOptions,
     InstallFormExplorerExtensionCommandOptions
@@ -172,6 +166,18 @@ import {
 import { managedInfobaseRuntimeTracker } from './infobaseRuntimeTracker';
 import { StepLibraryFavoritesService } from './stepLibraryFavorites';
 import { deleteFileWithTrashFallback, ScenarioFilesService } from './scenarioFilesService';
+import { registerScenarioFileNavigation } from './scenarioFileNavigation';
+import { createScenarioFileOpener } from './mxlFileOpener';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
+
+// These handlers create their own edits; await their prompts instead of an empty TextEditorEdit.
+function registerScenarioEditorCommand(id: string, work: (editor: vscode.TextEditor, edit: undefined) => unknown): vscode.Disposable {
+    return vscode.commands.registerCommand(id, () => {
+        const editor = vscode.window.activeTextEditor;
+        return editor ? work(editor, undefined) : undefined;
+    });
+}
 
 // Debounce mechanism to prevent double processing from VS Code auto-save
 const processingFiles = new Set<string>();
@@ -820,7 +826,7 @@ async function notifyIfUpdated(context: vscode.ExtensionContext): Promise<void> 
 
     const t = await getTranslator(context.extensionUri);
     const restartAction = t('Restart VS Code');
-    const selection = await vscode.window.showInformationMessage(
+    const selection = await kotUi.showInformationMessage(
         t('KOT for 1C updated to {0}. Restart VS Code to apply the update.', currentVersion),
         restartAction
     );
@@ -853,8 +859,11 @@ export async function activate(context: vscode.ExtensionContext) {
     const { YamlParametersManager } = await import('./yamlParametersManager.js');
     const initialProfile = await YamlParametersManager.getInstance(context).loadActiveProfileSnapshot();
     initializeScenarioScanRoot(context, initialProfile.buildParameters);
-    const stepCatalogService = new StepCatalogService(context, vscode);
+    const stepCatalogService = new StepCatalogService(context, vscode, generateConfiguredLocalStepCatalog);
+    kotWorkspacePanel.bindStepCatalogs(stepCatalogService);
     context.subscriptions.push(stepCatalogService);
+    registerLocalStepCatalogCommands(context, stepCatalogService);
+    registerSpprCompilerExportCommand(context);
     const activeProfileChangeEvent: vscode.Event<unknown> = listener => {
         let disposed = false;
         let subscription: vscode.Disposable | undefined;
@@ -909,11 +918,11 @@ export async function activate(context: vscode.ExtensionContext) {
             return new InfobaseManagerPanel(context, managedInfobaseService, {
                 service: vanessaInfobaseClients,
                 handle: (infobase, message) => handleVanessaInfobaseClientMessage(vanessaInfobaseClients, infobase, message, {
-                    input: options => Promise.resolve(vscode.window.showInputBox({ ...options, title: uiTranslator(options.title),
+                    input: options => Promise.resolve(kotUi.showInputBox({ ...options, title: uiTranslator(options.title),
                         prompt: uiTranslator('Leave empty to clear the saved value.'), ignoreFocusOut: true })),
                     confirmReplace: async (local, remote) => {
                         const replace = uiTranslator('Replace Vanessa profile');
-                        return await vscode.window.showWarningMessage(uiTranslator('Replace Vanessa profile "{0}" with saved client "{1}"?', remote, local),
+                        return await kotUi.showWarningMessage(uiTranslator('Replace Vanessa profile "{0}" with saved client "{1}"?', remote, local),
                             { modal: true }, replace) === replace;
                     },
                     connectManager: async () => { await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.connect'); }
@@ -952,18 +961,20 @@ export async function activate(context: vscode.ExtensionContext) {
         async path => { await (await loadInfobaseManagerPanel()).open(path, true); });
     registerVanessaVariableCommands(context, vanessaControlSession, uiTranslator);
     registerVanessaFormToolCommands(context, vanessaControlSession, vanessaControl.ensureConnected);
-    registerVanessaAuthoringCommands(context, vanessaControlSession, vanessaControl.ensureConnected, async text => {
+    registerVanessaSettingsCommands(context, vanessaControlSession, vanessaControl.ensureConnected);
+    const vanessaAuthoring = registerVanessaAuthoringCommands(context, vanessaControlSession, vanessaControl.ensureConnected, async text => {
         const { translateVanessaFormSteps } = await import('./vanessaControlFormLanguage.js');
         const { getConfiguredScenarioLanguage } = await import('./gherkinLanguage.js');
         const catalog = await stepCatalogService.getCatalog(vscode.window.activeTextEditor?.document.uri);
         const result = translateVanessaFormSteps(text, catalog.steps, getConfiguredScenarioLanguage());
-        if (result.untranslated) { void vscode.window.showWarningMessage(vscode.l10n.t('Some generated form checks have no unambiguous translation in the selected Vanessa step catalog. Their original text was preserved.')); }
+        if (result.untranslated) { void kotUi.showWarningMessage(vscode.l10n.t('Some generated form checks have no unambiguous translation in the selected Vanessa step catalog. Their original text was preserved.')); }
         return result.text;
     });
     registerVanessaDiagnosticsCommands(context, vanessaControlSession, vanessaControl.ensureConnected);
     const vanessaFormSource = new VanessaFormExplorerSource({
         completionEnabled: () => vscode.workspace.isTrusted !== false && vscode.workspace.getConfiguration('kotTestToolkit.vanessaControl').get<boolean>('formCompletions', true),
         snapshot: () => ({ generation: vanessaControlSession.snapshot.generation, ready: vanessaControlSession.snapshot.status === 'ready', busy: vanessaControlSession.busy,
+            elementStepsSupported: !!vanessaControlSession.snapshot.capabilities?.elementSteps?.supported,
             windowsSupported: !!vanessaControlSession.snapshot.capabilities?.formWindows.supported && !!vanessaControlSession.snapshot.capabilities?.formActivateWindow.supported,
             supported: !!vanessaControlSession.snapshot.capabilities?.formTree.supported && !!vanessaControlSession.snapshot.capabilities?.formWindow.supported && !!vanessaControlSession.snapshot.capabilities?.clientProfilesRead.supported }),
         run: (work, isCurrent) => vanessaControlSession.withFormControl(work, isCurrent),
@@ -982,7 +993,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const branchRefreshReady=new Promise<() => Promise<void>>(resolve=>{bindBranchRefresh=resolve;});
     watchProjectLibrary(context, formatChanged => {
         return Promise.resolve(formatChanged ? branchRefreshReady.then(refresh=>refresh()) : phaseSwitcherProvider.refreshProjectLibraryMetadata()).then(() => undefined).catch(error => {
-            void vscode.window.showErrorMessage(vscode.l10n.t('Could not refresh project library: {0}',
+            void kotUi.showErrorMessage(vscode.l10n.t('Could not refresh project library: {0}',
                 error instanceof Error ? error.message : String(error)));
         });
     });
@@ -1057,7 +1068,7 @@ export async function activate(context: vscode.ExtensionContext) {
             'kotTestToolkit.showCreateScenarioMenu',
             async () => {
                 const t = await getTranslator(context.extensionUri);
-                const picked = await vscode.window.showQuickPick([
+                const picked = await kotUi.showQuickPick([
                     { label: t('Main scenario'), command: 'kotTestToolkit.createMainScenario' },
                     { label: t('Feature file'), command: 'kotTestToolkit.createFeature' },
                     { label: t('Main process'), command: 'kotTestToolkit.createProcess' },
@@ -1350,7 +1361,7 @@ export async function activate(context: vscode.ExtensionContext) {
                     await standaloneFeatureService.refresh();
                     await refreshStepDefinitions(resource);
                 } catch (error) {
-                    await vscode.window.showErrorMessage(vscode.l10n.t('Could not refresh the step library.') + ' ' + String(error));
+                    await kotUi.showErrorMessage(vscode.l10n.t('Could not refresh the step library.') + ' ' + String(error));
                 }
             }
             return deleted;
@@ -1371,7 +1382,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 await updateActiveScenarioContext(vscode.window.activeTextEditor);
                 return true;
             } catch (error) {
-                await vscode.window.showErrorMessage(vscode.l10n.t(error instanceof Error ? error.message : String(error)));
+                await kotUi.showErrorMessage(vscode.l10n.t(error instanceof Error ? error.message : String(error)));
                 return false;
             }
         },
@@ -1392,6 +1403,7 @@ export async function activate(context: vscode.ExtensionContext) {
         await projectDefinitionIndex.waitForIdle();
         await phaseSwitcherProvider.refreshFromExternalStateChange({ refreshCache: true });
     };
+    const openScenarioFile = createScenarioFileOpener(context, vanessaControlSession);
     const scenarioFilesService = new ScenarioFilesService({
         parseUri: value => vscode.Uri.parse(value),
         dirname: uri => (uri as vscode.Uri).with({
@@ -1412,7 +1424,7 @@ export async function activate(context: vscode.ExtensionContext) {
             })),
         isFileNotFound: error => error instanceof vscode.FileSystemError
             && error.code === 'FileNotFound',
-        openExternal: uri => vscode.env.openExternal(uri as vscode.Uri),
+        openExternal: uri => openScenarioFile(uri as vscode.Uri),
         openInEditor: async uri => {
             const document = await vscode.workspace.openTextDocument(uri as vscode.Uri);
             await vscode.window.showTextDocument(document, { preview: true });
@@ -1423,7 +1435,7 @@ export async function activate(context: vscode.ExtensionContext) {
         },
         confirmDelete: async relativePath => {
             const deleteLabel = vscode.l10n.t('Delete');
-            const choice = await vscode.window.showWarningMessage(
+            const choice = await kotUi.showWarningMessage(
                 vscode.l10n.t('Delete scenario attachment "{0}"?', relativePath),
                 { modal: true },
                 deleteLabel
@@ -1434,7 +1446,7 @@ export async function activate(context: vscode.ExtensionContext) {
             uri as vscode.Uri,
             (target, options) => vscode.workspace.fs.delete(target, options)
         ),
-        promptRename: name => vscode.window.showInputBox({ title: vscode.l10n.t('Rename attachment'), value: name,
+        promptRename: name => kotUi.showInputBox({ title: vscode.l10n.t('Rename attachment'), value: name,
             ignoreFocusOut: true, validateInput: value => !value.trim() || /[\\/:*?"<>|\x00-\x1f]/u.test(value)
                 || value === '.' || value === '..' || /[. ]$/u.test(value) ? vscode.l10n.t('Enter a valid attachment file name without a path.') : undefined }),
         renameFile: (from, to) => vscode.workspace.fs.rename(from as vscode.Uri, to as vscode.Uri, { overwrite: false }),
@@ -1453,7 +1465,7 @@ export async function activate(context: vscode.ExtensionContext) {
             const replace = vscode.l10n.t('Replace');
             const saveCopy = vscode.l10n.t('Save copy');
             const skip = vscode.l10n.t('Skip');
-            const choice = await vscode.window.showWarningMessage(
+            const choice = await kotUi.showWarningMessage(
                 vscode.l10n.t('A resource named "{0}" already exists.', relativePath),
                 { modal: true },
                 replace,
@@ -1466,6 +1478,17 @@ export async function activate(context: vscode.ExtensionContext) {
     phaseSwitcherProvider.attachScenarioFilesService(scenarioFilesService);
     scenarioPropertiesEditor.panel.attachScenarioFilesService(scenarioFilesService);
     snapshotService.attachScenarioFilesService(scenarioFilesService);
+    registerAgentExtension(context, { provider: phaseSwitcherProvider, definitions: projectDefinitionResolver, standalone: standaloneFeatureService,
+        session: vanessaControlSession, ensureConnected: () => vanessaControl.ensureAgentConnected(), manager: vanessaControl.manager, runLog: () => vanessaControl.runLogPath(),
+        actions: workspace => createAgentNativeActions({ context, workspace, provider: phaseSwitcherProvider, standalone: standaloneFeatureService,
+            session: vanessaControlSession, infobases: managedInfobaseService, snapshots: snapshotService, library: actionService,
+            favorites: stepLibraryFavoritesService, files: scenarioFilesService, properties: () => scenarioPropertiesEditor.panel.createApiControllers(),
+            infobasePreferences: async input => (await loadInfobaseManagerPanel()).apiPreferences(input),
+            definitions: projectDefinitionResolver, references: projectDefinitionReferenceService, authoring: vanessaAuthoring,
+            uiState: () => ({ statusFilter: testManagerStatusFilter.getMode(), relationships: relationshipService.getState(),
+                presentation: { testManager: relationshipPresentation.getMode('testManager'), stepLibrary: relationshipPresentation.getMode('stepLibrary') },
+                repair: { running: batchProcessingInProgress, cancellationRequested: scenarioRepairCancellationSource?.token.isCancellationRequested ?? false } }) }) });
+    registerScenarioFileNavigation(context, snapshotService, scenarioFilesService, openScenarioFile);
     const stepLibrarySidebarProvider = new StepLibrarySidebarProvider({
         translate: uiTranslator,
         extensionUri: context.extensionUri,
@@ -1982,22 +2005,10 @@ export async function activate(context: vscode.ExtensionContext) {
             await vscode.commands.executeCommand('editor.action.triggerSuggest');
         }
     ));
-    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
+    context.subscriptions.push(registerScenarioEditorCommand(
         'kotTestToolkit.openSubscenario', (editor, edit) => openSubscenarioHandler(editor, edit, projectDefinitionResolver)
     ));
-    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        'kotTestToolkit.generateScenarioDescriptionWithAi',
-        editor => void handleGenerateScenarioDescriptionWithAi(editor)
-    ));
-    context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.generateConfigurationDiffImpactReportWithAi',
-        () => void handleGenerateConfigurationDiffImpactReport()
-    ));
-    context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.reviewChangedTestsWithAi',
-        () => void handleReviewChangedTestsWithAi()
-    ));
-    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
+    context.subscriptions.push(registerScenarioEditorCommand(
         'kotTestToolkit.openNestedScenarioFromFeature',
         async (editor, edit) => {
             if (await phaseSwitcherProvider.openCompilerSourceFromFeatureEditor(editor)) { return; }
@@ -2064,12 +2075,12 @@ export async function activate(context: vscode.ExtensionContext) {
 
             const definition = parseScenarioParameterDefinitions(document.getText()).get(parameterName);
             if (!definition) {
-                vscode.window.showWarningMessage(t('Scenario parameter "{0}" was not found in the document.', parameterName));
+                kotUi.showWarningMessage(t('Scenario parameter "{0}" was not found in the document.', parameterName));
                 return;
             }
 
             if (!definition.valueRange) {
-                vscode.window.showWarningMessage(t('Default value is not defined in the parameter block.'));
+                kotUi.showWarningMessage(t('Default value is not defined in the parameter block.'));
                 return;
             }
 
@@ -2081,7 +2092,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 return;
             }
 
-            const nextValue = await vscode.window.showInputBox({
+            const nextValue = await kotUi.showInputBox({
                 title: t('Edit default value'),
                 prompt: t('Enter default value for scenario parameter "{0}". You can use plain text, quoted text or [AnotherParameter].', parameterName),
                 value: definition.rawDefaultValue ?? '',
@@ -2299,7 +2310,7 @@ export async function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.changeScenarioGroup', async (uri?: vscode.Uri) => {
             try { await phaseSwitcherProvider.changeScenarioGroup(uri); }
             catch (error) {
-                void vscode.window.showErrorMessage(vscode.l10n.t('Could not change group: {0}',
+                void kotUi.showErrorMessage(vscode.l10n.t('Could not change group: {0}',
                     error instanceof Error ? error.message : String(error)));
             }
         }
@@ -2310,7 +2321,7 @@ export async function activate(context: vscode.ExtensionContext) {
             if (!resource) { return; }
             try { await openProjectMetadata(resource); }
             catch (error) {
-                void vscode.window.showErrorMessage(vscode.l10n.t('Could not open project metadata: {0}',
+                void kotUi.showErrorMessage(vscode.l10n.t('Could not open project metadata: {0}',
                     error instanceof Error ? error.message : String(error)));
             }
         }
@@ -2336,7 +2347,7 @@ export async function activate(context: vscode.ExtensionContext) {
                     translate: t
                 });
             } catch (error) {
-                vscode.window.showErrorMessage(t('Could not create the user step: {0}', String(error)));
+                kotUi.showErrorMessage(t('Could not create the user step: {0}', String(error)));
             }
         }
     ));
@@ -2351,14 +2362,14 @@ export async function activate(context: vscode.ExtensionContext) {
                     refreshLibraries: () => projectDefinitionIndex.refreshLibraries()
                 });
             } catch (error) {
-                vscode.window.showErrorMessage(t('User-step library operation failed: {0}', String(error)));
+                kotUi.showErrorMessage(t('User-step library operation failed: {0}', String(error)));
                 return false;
             }
         }));
     }
     context.subscriptions.push(vscode.commands.registerCommand('kotTestToolkit.manageUserStepLibraries', async () => {
         const t = await getTranslator(context.extensionUri);
-        const selected = await vscode.window.showQuickPick([
+        const selected = await kotUi.showQuickPick([
             { label: '$(tools) ' + t('Build EPF'), command: 'kotTestToolkit.buildUserStepLibrary' },
             { label: '$(file-code) ' + t('Dump sources…'), command: 'kotTestToolkit.dumpUserStepLibrary' }
         ], { title: t('EPF libraries'), ignoreFocusOut: true });
@@ -2442,13 +2453,13 @@ export async function activate(context: vscode.ExtensionContext) {
             await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
     ));
-    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
+    context.subscriptions.push(registerScenarioEditorCommand(
         'kotTestToolkit.insertNestedScenarioRef', (editor, edit) => insertNestedScenarioRefHandler(editor, edit, phaseSwitcherProvider)
     ));
-    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
+    context.subscriptions.push(registerScenarioEditorCommand(
         'kotTestToolkit.insertScenarioParam', insertScenarioParamHandler
     ));
-    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
+    context.subscriptions.push(registerScenarioEditorCommand(
         'kotTestToolkit.insertUid', insertUidHandler
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
@@ -2458,28 +2469,23 @@ export async function activate(context: vscode.ExtensionContext) {
             projectDefinitionResolver
         )
     ));
-    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
+    context.subscriptions.push(registerScenarioEditorCommand(
         'kotTestToolkit.replaceTabsWithSpacesYaml', replaceTabsWithSpacesYamlHandler
     ));
-    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
+    context.subscriptions.push(registerScenarioEditorCommand(
         'kotTestToolkit.checkAndFillNestedScenarios', (editor, edit) => checkAndFillNestedScenariosHandler(editor, edit, phaseSwitcherProvider)
     ));
-    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
+    context.subscriptions.push(registerScenarioEditorCommand(
         'kotTestToolkit.checkAndFillScriptParameters', checkAndFillScenarioParametersHandler
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.openMxlFileFromExplorer', (uri: vscode.Uri) => openMxlFileFromExplorerHandler(uri)
+        'kotTestToolkit.openMxlFileFromExplorer', async (uri: vscode.Uri) => {
+            if (!uri?.fsPath) { return; }
+            try { await openScenarioFile(uri); }
+            catch (error) { void kotUi.showErrorMessage(vscode.l10n.t('Could not open the file: {0}', error instanceof Error ? error.message : String(error))); }
+        }
     ));
-    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        'kotTestToolkit.openMxlFile', (editor, edit) => openMxlFileFromTextHandler(editor, edit, phaseSwitcherProvider)
-    ));
-    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        'kotTestToolkit.revealFileInExplorer', (editor, edit) => revealFileInExplorerHandler(editor, edit, phaseSwitcherProvider)
-    ));
-    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        'kotTestToolkit.revealFileInOS', (editor, edit) => revealFileInOSHandler(editor, edit, phaseSwitcherProvider)
-    ));
-    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
+    context.subscriptions.push(registerScenarioEditorCommand(
         'kotTestToolkit.openCurrentScenarioFilesFolder', editor => openCurrentScenarioFilesFolderHandler(editor)
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
@@ -2498,7 +2504,7 @@ export async function activate(context: vscode.ExtensionContext) {
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.setDemoStateForScenario', () => {
-            void phaseSwitcherProvider.showDemoStatePickerForScenario();
+            return phaseSwitcherProvider.showDemoStatePickerForScenario();
         }
     ));
 
@@ -2518,7 +2524,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     const refreshGherkinStepsCommand = async () => {
         const t = await getTranslator(context.extensionUri);
-        await vscode.window.withProgress({
+        await kotUi.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: t('Updating Gherkin steps...'),
             cancellable: false
@@ -2531,7 +2537,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 progress.report({ increment: 100, message: t('Gherkin hints update completed.') });
                 const selected = catalogs[0];
                 if (selected) {
-                    vscode.window.showInformationMessage(t(
+                    kotUi.showInformationMessage(t(
                         'Steps library updated: version {0}, source {1}, {2} steps.',
                         selected.requestedVersion ?? selected.catalogVersion,
                         selected.source,
@@ -2583,7 +2589,7 @@ export async function activate(context: vscode.ExtensionContext) {
             const message = vscode.l10n.t('Language setting changed. Reload window to apply?');
             const reloadNow = vscode.l10n.t('Reload Window');
             const later = vscode.l10n.t('Later');
-            const choice = await vscode.window.showInformationMessage(message, reloadNow, later);
+            const choice = await kotUi.showInformationMessage(message, reloadNow, later);
             if (choice === reloadNow) {
                 await vscode.commands.executeCommand('workbench.action.reloadWindow');
             }
@@ -2623,7 +2629,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.openYamlParametersManager',
-        () => handleOpenYamlParametersManager(context)
+        (tab?: unknown) => handleOpenYamlParametersManager(context, tab)
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(
@@ -2659,12 +2665,12 @@ export async function activate(context: vscode.ExtensionContext) {
                 clients: vanessaInfobaseClients,
                 connectManager: async () => { await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.connect'); },
                 configure: async path => { await (await loadInfobaseManagerPanel()).open(path, true); },
-                pick: async rows => (await vscode.window.showQuickPick([
+                pick: async rows => (await kotUi.showQuickPick([
                     ...rows.map(row => ({ label: row.name, description: row.username || vscode.l10n.t('Default user'), id: row.id })),
                     { label: vscode.l10n.t('Configure test clients…'), id: 'configure' }
                 ], { title: vscode.l10n.t('Select a test client for this infobase'), ignoreFocusOut: true }))?.id
             });
-        } catch { void vscode.window.showErrorMessage(vscode.l10n.t('Could not connect the selected test client. Check its settings in Infobase Manager.')); return false; }
+        } catch { void kotUi.showErrorMessage(vscode.l10n.t('Could not connect the selected test client. Check its settings in Infobase Manager.')); return false; }
     };
     context.subscriptions.push(vscode.commands.registerCommand('kotTestToolkit.openVanessaForInfobase', async (base?: unknown) => {
         if (typeof base === 'string' && base.trim()) { await launchInfobaseClient(base); }
@@ -2748,14 +2754,14 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.processQueuedScenarioFiles',
         async () => {
-            await runScenarioRepairBatch('changed');
+            return runScenarioRepairBatch('changed');
         }
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.processAllScenarioFiles',
         async () => {
-            await runScenarioRepairBatch('all');
+            return runScenarioRepairBatch('all');
         }
     ));
 
@@ -2764,7 +2770,7 @@ export async function activate(context: vscode.ExtensionContext) {
         async () => {
             const t = await getTranslator(context.extensionUri);
             if (!batchProcessingInProgress || !scenarioRepairCancellationSource) {
-                vscode.window.showInformationMessage(t('No scenario repair is currently running.'));
+                kotUi.showInformationMessage(t('No scenario repair is currently running.'));
                 return;
             }
 
@@ -2860,7 +2866,7 @@ export async function activate(context: vscode.ExtensionContext) {
         const showCompletionMessage = options.showCompletionMessage ?? true;
         const progressLocation = options.progressLocation ?? vscode.ProgressLocation.Notification;
 
-        await vscode.window.withProgress({
+        await kotUi.withProgress({
             location: progressLocation,
             title: t('Scanning workspace scenario diagnostics...'),
             cancellable: false
@@ -2869,7 +2875,7 @@ export async function activate(context: vscode.ExtensionContext) {
         });
 
         if (showCompletionMessage) {
-            vscode.window.showInformationMessage(t('Workspace scenario diagnostics scan completed.'));
+            kotUi.showInformationMessage(t('Workspace scenario diagnostics scan completed.'));
         }
     };
 
@@ -2929,7 +2935,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const runScenarioRepairBatch = async (mode: 'changed' | 'all') => {
         const t = await getTranslator(context.extensionUri);
         if (batchProcessingInProgress) {
-            vscode.window.showInformationMessage(t('Scenario repair is already running.'));
+            kotUi.showInformationMessage(t('Scenario repair is already running.'));
             return;
         }
 
@@ -2954,7 +2960,7 @@ export async function activate(context: vscode.ExtensionContext) {
             t('- validate critical sections and rollback file on unsafe result;'),
             t('- save updated files and refresh Test Manager data.')
         ];
-        const confirmation = await vscode.window.showWarningMessage(
+        const confirmation = await kotUi.showWarningMessage(
             confirmationMessageLines.join('\n'),
             { modal: true },
             runRepairAction
@@ -2992,8 +2998,16 @@ export async function activate(context: vscode.ExtensionContext) {
         }
 
         const candidateUris = Array.from(candidateUrisByKey.values());
+        if (hasKotInteraction()) {
+            for (const uri of candidateUris) {
+                await assertKotPath(uri.fsPath);
+                if (vscode.workspace.textDocuments.some(document => document.uri.toString() === uri.toString() && document.isDirty)) {
+                    throw new Error('Save affected sources before an agent operation.');
+                }
+            }
+        }
         if (candidateUris.length === 0) {
-            vscode.window.showInformationMessage(
+            kotUi.showInformationMessage(
                 mode === 'all'
                     ? t('No scenario YAML files found in configured YAML source directory.')
                     : t('No changed scenario files to repair.')
@@ -3024,7 +3038,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 ? await phaseSwitcherProvider.ensureFreshScenarioCatalog()
                 : null;
 
-            await vscode.window.withProgress({
+            await kotUi.withProgress({
                 location: vscode.ProgressLocation.Notification,
                 title: mode === 'all'
                     ? t('Repairing all scenario files in configured YAML source directory...')
@@ -3054,6 +3068,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
                         try {
                             const document = await vscode.workspace.openTextDocument(fileUri);
+                            await assertKotPath(fileUri.fsPath);
+                            if (hasKotInteraction() && document.isDirty) { throw new Error('Save affected sources before an agent operation.'); }
                             if (!isScenarioYamlFile(document)) {
                                 unchangedCount++;
                                 continue;
@@ -3212,7 +3228,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 } catch (error) {
                     const reportError = error instanceof Error ? error.message : String(error);
                     console.error('[Extension] Failed to write scenario repair report:', error);
-                    vscode.window.showErrorMessage(t('Unable to generate scenario repair report: {0}', reportError));
+                    kotUi.showErrorMessage(t('Unable to generate scenario repair report: {0}', reportError));
                 }
             }
 
@@ -3225,7 +3241,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 );
                 if (failureReportUri) {
                     const openReportAction = t('Open report');
-                    const choice = await vscode.window.showWarningMessage(
+                    const choice = await kotUi.showWarningMessage(
                         `${cancelledSummary} ${t('Failure report generated.')}`,
                         openReportAction
                     );
@@ -3234,9 +3250,9 @@ export async function activate(context: vscode.ExtensionContext) {
                         await vscode.window.showTextDocument(reportDoc, { preview: false });
                     }
                 } else {
-                    vscode.window.showWarningMessage(cancelledSummary);
+                    kotUi.showWarningMessage(cancelledSummary);
                 }
-                return;
+                return { cancelled: true, changed: changedCount, unchanged: unchangedCount, failed: failedCount, report: failureReportUri?.toString() };
             }
 
             const summary = t(
@@ -3248,7 +3264,7 @@ export async function activate(context: vscode.ExtensionContext) {
             if (failedCount > 0) {
                 if (failureReportUri) {
                     const openReportAction = t('Open report');
-                    const choice = await vscode.window.showWarningMessage(
+                    const choice = await kotUi.showWarningMessage(
                         `${summary} ${t('Failure report generated.')}`,
                         openReportAction
                     );
@@ -3257,11 +3273,12 @@ export async function activate(context: vscode.ExtensionContext) {
                         await vscode.window.showTextDocument(reportDoc, { preview: false });
                     }
                 } else {
-                    vscode.window.showWarningMessage(summary);
+                    kotUi.showWarningMessage(summary);
                 }
             } else {
-                vscode.window.showInformationMessage(summary);
+                kotUi.showInformationMessage(summary);
             }
+            return { cancelled: false, changed: changedCount, unchanged: unchangedCount, failed: failedCount, report: failureReportUri?.toString() };
         } finally {
             batchProcessingInProgress = false;
             if (scenarioRepairCancellationSource) {
@@ -3278,7 +3295,7 @@ export async function activate(context: vscode.ExtensionContext) {
             try {
                 const t = await getTranslator(context.extensionUri);
                 const runScanAction = t('Run scan');
-                const confirmation = await vscode.window.showWarningMessage(
+                const confirmation = await kotUi.showWarningMessage(
                     t('Workspace diagnostics scan may create high load on large projects. Continue?'),
                     { modal: true },
                     runScanAction
@@ -3296,7 +3313,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 const t = await getTranslator(context.extensionUri);
                 const message = error instanceof Error ? error.message : String(error);
                 console.error('[Extension] scanWorkspaceDiagnostics failed:', error);
-                vscode.window.showErrorMessage(t('Failed to scan scenario diagnostics: {0}', message));
+                kotUi.showErrorMessage(t('Failed to scan scenario diagnostics: {0}', message));
             }
         }
     ));
@@ -3312,7 +3329,7 @@ export async function activate(context: vscode.ExtensionContext) {
                     document = await vscode.workspace.openTextDocument(targetUri);
                 } catch (error) {
                     console.error('[Extension] Failed to open document for fixScenarioIssues:', error);
-                    vscode.window.showErrorMessage(t('Failed to open file for fixing.'));
+                    kotUi.showErrorMessage(t('Failed to open file for fixing.'));
                     return;
                 }
             } else {
@@ -3320,13 +3337,13 @@ export async function activate(context: vscode.ExtensionContext) {
             }
 
             if (!document) {
-                vscode.window.showWarningMessage(t('No active YAML scenario file.'));
+                kotUi.showWarningMessage(t('No active YAML scenario file.'));
                 return;
             }
 
             const { isScenarioYamlFile } = await import('./yamlValidator.js');
             if (!isScenarioYamlFile(document)) {
-                vscode.window.showWarningMessage(t('This command is only available for scenario YAML files.'));
+                kotUi.showWarningMessage(t('This command is only available for scenario YAML files.'));
                 return;
             }
 
@@ -3335,7 +3352,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
             try {
                 const completedOperations: string[] = [];
-                await vscode.window.withProgress({
+                await kotUi.withProgress({
                     location: vscode.ProgressLocation.Notification,
                     title: t('Fixing scenario issues...'),
                     cancellable: false
@@ -3380,14 +3397,14 @@ export async function activate(context: vscode.ExtensionContext) {
 
                 await document.save();
                 if (completedOperations.length > 0) {
-                    vscode.window.showInformationMessage(t('Scenario issues fixed.'));
+                    kotUi.showInformationMessage(t('Scenario issues fixed.'));
                 } else {
-                    vscode.window.showInformationMessage(t('No issues to fix.'));
+                    kotUi.showInformationMessage(t('No issues to fix.'));
                 }
             } catch (error) {
                 console.error('[Extension] fixScenarioIssues failed:', error);
                 const errorMessage = error instanceof Error ? error.message : String(error);
-                vscode.window.showErrorMessage(t('Failed to fix scenario issues: {0}', errorMessage));
+                kotUi.showErrorMessage(t('Failed to fix scenario issues: {0}', errorMessage));
             } finally {
                 processingFiles.delete(fileKey);
             }
@@ -3401,7 +3418,7 @@ export async function activate(context: vscode.ExtensionContext) {
         context.subscriptions.push(await registerNativeProjectCatalogSettings(context, phaseSwitcherProvider));
     }).catch(error => {
         console.error('[SettingsProvider] Failed to initialize project catalog settings:', error);
-        void vscode.window.showErrorMessage(vscode.l10n.t('Could not initialize project catalog settings: {0}', String(error)));
+        void kotUi.showErrorMessage(vscode.l10n.t('Could not initialize project catalog settings: {0}', String(error)));
     });
 
     const { NativeSpprScenarioSynchronizer } = await import('./spprScenarioSync.js');
@@ -3437,7 +3454,7 @@ export async function activate(context: vscode.ExtensionContext) {
             }
             if (/(?:^|[\\/])(?:meta\.yaml|scen\.feature)$/u.test(document.fileName)) {
                 try { if (await nativeSpprSync.onSave(document)) { return; } }
-                catch (error) { console.error('[SPPR] Native metadata synchronization failed:', error); void vscode.window.showErrorMessage(vscode.l10n.t('Could not synchronize SPPR metadata: {0}', error instanceof Error ? error.message : String(error))); return; }
+                catch (error) { console.error('[SPPR] Native metadata synchronization failed:', error); void kotUi.showErrorMessage(vscode.l10n.t('Could not synchronize SPPR metadata: {0}', error instanceof Error ? error.message : String(error))); return; }
             }
             // Проверяем, что это YAML файл сценария
             if (document.languageId === 'yaml' || document.fileName.toLowerCase().endsWith('.yaml')) {
@@ -3520,7 +3537,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 if (enabledOperations.length > 0) {
                     const t = await getTranslator(context.extensionUri);
 
-                    await vscode.window.withProgress({
+                    await kotUi.withProgress({
                         location: vscode.ProgressLocation.Notification,
                         title: t('Processing file after save...'),
                         cancellable: false
@@ -3614,7 +3631,7 @@ export async function activate(context: vscode.ExtensionContext) {
                             if (completedOperations.length > 0) {
                                 const message = await buildCompletionMessage(completedOperations, t, showRefillMessages);
                                 if (showRefillMessages) {
-                                    vscode.window.showInformationMessage(message);
+                                    kotUi.showInformationMessage(message);
                                 }
 
                                 // Save the file after processing to prevent user from seeing unsaved changes
@@ -3646,7 +3663,7 @@ export async function activate(context: vscode.ExtensionContext) {
                         } catch (error) {
                             console.error('[Extension] Error during post-save operations:', error);
                             const errorMessage = error instanceof Error ? error.message : String(error);
-                            vscode.window.showErrorMessage(t('Error processing file after save: {0}', errorMessage));
+                            kotUi.showErrorMessage(t('Error processing file after save: {0}', errorMessage));
                             // Clean up debounce immediately on error (no auto-save will happen)
                             processingFiles.delete(fileKey);
                         }

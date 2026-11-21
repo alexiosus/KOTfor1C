@@ -1,7 +1,9 @@
+import { redactVanessaDiagnosticText } from './vanessaControlRedaction';
+export { redactVanessaDiagnosticText } from './vanessaControlRedaction';
 import { vanessaFormReplyText } from './vanessaControlForms';
 import { parseVanessaClientProfiles } from './vanessaControlClients';
 import { createHash } from 'node:crypto';
-import { sameVanessaFeaturePath } from './vanessaControlProtocol';
+import { sameVanessaFeaturePath, readVanessaStructuredReply, parseVanessaControlReply } from './vanessaControlProtocol';
 
 export type VanessaDiagnosticTool = 'get_vanessa_automation_state' | 'get_environment_data' | 'manage_test_client_profiles' | 'get_test_results'
     | 'get_event_log_manager' | 'get_event_log_test_client' | 'search_for_steps_by_keywords' | 'check_syntax' | 'get_window_list_os' | 'get_window_screenshot_os';
@@ -17,34 +19,21 @@ export interface VanessaDiagnosticReport { readonly schemaVersion: 1; readonly c
 export interface VanessaDiagnosticWindows { readonly client: string; readonly titles: readonly string[] }
 export class VanessaDiagnosticError extends Error {}
 
-/** Remove entire credential-bearing lines, rather than trying to preserve arbitrary quoted values. */
-export function redactVanessaDiagnosticText(text: string): string {
-    let continuation: { indentation: number; awaitingValue: boolean } | undefined;
-    return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/gu, '').split(/\r\n|\r|\n/u).map(line => {
-        let check = line;
-        for (let n = 0; n < 2; n++) { try { check = decodeURIComponent(check); } catch { break; } }
-        check = check.replace(/\\+["']/gu, '"');
-        const secret = /(?:^|[\s"'|;?&,\[{])(?:--?)?(?:[a-z\d]+[_-])*(?:password|pwd|пароль|token|api[_ -]?key|authorization|secret|access[_-]?token|refresh[_-]?token)\s*["']?\s*(?:[:=]|(?=\s+\S))/iu.test(check)
-            || /\bBearer\s+\S+|(?:^|[\s"'\[,])\/P\S*|https?:\/\/[^\s/]+:[^\s/]*@/iu.test(check)
-            || /строка подключения|строка соединения с информационной базой|дополнительные параметры|connection string|additional parameters/iu.test(check);
-        const indentation = /^\s*/u.exec(check)![0].length;
-        if (secret) {
-            continuation = /[:=]\s*(?:[|>][-+]?|[\[{])?\s*$/u.test(check) ? { indentation, awaitingValue: true } : undefined;
-            return '[redacted]';
-        }
-        if (continuation && check.trim()) {
-            if (continuation.awaitingValue || indentation > continuation.indentation) {
-                continuation.awaitingValue = false; return '[redacted]';
-            }
-            continuation = undefined;
-        }
-        return line;
-    }).join('\n');
-}
-
 /** Explicit bounded reads; never poll logs, retain raw responses or turn unknown prose into a pass. */
 export class VanessaRuntimeDiagnostics {
     constructor(private readonly ports: VanessaDiagnosticPorts) {}
+    async completedRun(filePath: string, runId: string): Promise<unknown> {
+        const results = await this.raw('get_test_results', { format: 'json' });
+        const state = await this.raw('get_vanessa_automation_state', { format: 'json' });
+        const data = readVanessaStructuredReply(results); const observed = readVanessaStructuredReply(state);
+        const parsed = parseVanessaControlReply('get_test_results', results);
+        const feature = observed?.currentFeature as { fullPath?: string } | undefined;
+        if (parsed.kind !== 'runtimeResult' || parsed.status !== 'passed' || data?.runId !== runId || observed?.runId !== runId || observed?.isRunning !== false ||
+            typeof data?.featurePath !== 'string' || !sameVanessaFeaturePath(filePath, data.featurePath) || !feature?.fullPath || !sameVanessaFeaturePath(filePath, feature.fullPath)) {
+            throw new VanessaDiagnosticError('No matching completed successful run is available. Preserve unknown status and investigate the evidence.');
+        }
+        return { state, results };
+    }
     private current(signal?: AbortSignal) {
         signal?.throwIfAborted();
         if (!this.ports.isCurrent()) { throw new VanessaDiagnosticError('The Vanessa session changed. Collect diagnostics again.'); }

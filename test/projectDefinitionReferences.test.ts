@@ -1,11 +1,15 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
+import { fileURLToPath } from 'node:url';
+import { localFileUri, virtualFilePath } from './helpers/filePaths';
 import {
     createProjectDefinitionView,
     normalizeProjectDefinitionTemplate,
+    sameProjectDefinitionSource,
     type ProjectDefinition
 } from '../src/projectDefinition';
 import { resolveProjectInvocation } from '../src/projectDefinitionMatcher';
@@ -39,7 +43,7 @@ class Range {
 function uri(value: string) {
     return {
         scheme: value.split(':', 1)[0],
-        fsPath: value.replace(/^file:\/\//, ''),
+        fsPath: value.startsWith('file:') ? fileURLToPath(value) : new URL(value).pathname,
         toString: () => value
     };
 }
@@ -51,7 +55,7 @@ const vscode = {
     Position,
     Range,
     Uri: {
-        file: (filePath: string) => uri(`file://${filePath}`),
+        file: (filePath: string) => uri(localFileUri(filePath)),
         parse: uri
     },
     workspace: { textDocuments: [] as unknown[] }
@@ -102,7 +106,7 @@ async function collectTreeWithConcurrencyLimit<T>(
     return values;
 }
 
-function loadReferencesModule(): Record<string, unknown> {
+function loadReferencesModule(nativeSources: ReadonlyMap<string, string> = new Map()): Record<string, unknown> {
     const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
     const source = fs.readFileSync(
         path.join(process.cwd(), 'src', 'projectDefinitionReferences.ts'),
@@ -116,6 +120,14 @@ function loadReferencesModule(): Record<string, unknown> {
         module: moduleObject,
         exports: moduleObject.exports,
         require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
+            if (specifier === './projectDefinition') { return { sameProjectDefinitionSource }; }
+            if (specifier === './spprScenarioFiles.js') {
+                return { resolveScenarioSourceUris: async (document: { toString(): string }) => {
+                    const metadata = nativeSources.get(document.toString());
+                    return metadata ? { format: 'native', metadataUri: uri(metadata) } : undefined;
+                } };
+            }
             if (specifier === './scenarioCompilerSyntax') { return compilerSyntax; }
             if (specifier === 'vscode') {
                 return vscode;
@@ -254,11 +266,11 @@ function createService(
         resolver: resolverFor(definitions),
         loadSearchRoots: async () => roots,
         fileSystem: {
-            realpath: (value: string) => fileSystem.realpath(value),
-            readDirectory: (value: string) => fileSystem.readDirectory(value),
-            stat: (value: string) => fileSystem.stat(value),
-            readFile: (value: string) => fileSystem.readFile(value),
-            toUri: (value: string) => `file://${value}`
+            realpath: (value: string) => fileSystem.realpath(virtualFilePath(value)),
+            readDirectory: (value: string) => fileSystem.readDirectory(virtualFilePath(value)),
+            stat: (value: string) => fileSystem.stat(virtualFilePath(value)),
+            readFile: (value: string) => fileSystem.readFile(virtualFilePath(value)),
+            toUri: localFileUri
         },
         getOpenDocuments: () => openDocuments,
         directoryConcurrency: 2,
@@ -270,7 +282,7 @@ const noCancellation = { isCancellationRequested: false };
 
 test('strict reference searches reject inaccessible roots, directories and caller files', async () => {
     for (const failedMethod of ['realpath', 'readDirectory', 'readFile'] as const) {
-        const exported = definition('export:open', 'exportScenario', 'open window', 'file:///library/export.feature');
+        const exported = definition('export:open', 'exportScenario', 'open window', localFileUri("/library/export.feature"));
         const fileSystem = new VirtualFileSystem({ '/scenario/caller.feature': { text: 'Feature: A\nScenario: B\n    And open window\n' } });
         fileSystem[failedMethod] = async () => { throw new Error('Access denied'); };
         const service = createService([exported], fileSystem, [{ path: '/scenario', extensions: ['.feature'] }]);
@@ -280,10 +292,10 @@ test('strict reference searches reject inaccessible roots, directories and calle
 });
 
 test('strict rename searches include saved calls hidden by an unsaved edit', async () => {
-    const exported = definition('export:open', 'exportScenario', 'open window', 'file:///library/export.feature');
+    const exported = definition('export:open', 'exportScenario', 'open window', localFileUri("/library/export.feature"));
     const fileSystem = new VirtualFileSystem({ '/scenario/caller.feature': { text: 'Feature: A\nScenario: B\n    And open window\n' } });
     const document = {
-        uri: uri('file:///scenario/caller.feature'), fileName: '/scenario/caller.feature', version: 2, isUntitled: false, isDirty: true,
+        uri: uri(localFileUri("/scenario/caller.feature")), fileName: '/scenario/caller.feature', version: 2, isUntitled: false, isDirty: true,
         getText: () => 'Feature: A\nScenario: B\n    And different call\n'
     };
     const service = createService([exported], fileSystem, [{ path: '/scenario', extensions: ['.feature'] }], [document]);
@@ -293,12 +305,22 @@ test('strict rename searches include saved calls hidden by an unsaved edit', asy
     assert.equal(references[0].uri.toString(), document.uri.toString());
 });
 
+test('strict reference scans skip an uncreated search root while scanning existing sources', async () => {
+    const exported = definition('export:open', 'exportScenario', 'open window', localFileUri('/library/export.feature'));
+    const fileSystem = new VirtualFileSystem({ '/scenario/caller.feature': { text: 'Feature: A\nScenario: B\n    And open window\n' } });
+    const realpath = fileSystem.realpath.bind(fileSystem);
+    fileSystem.realpath = async file => { if (file.endsWith('not-built')) { throw Object.assign(new Error('Not built yet'), { code: 'ENOENT' }); } return realpath(file); };
+    const service = createService([exported], fileSystem, [{ path: '/scenario', extensions: ['.feature'] }, { path: '/not-built', extensions: ['.feature'] }]);
+    const references = await service.findReferences(exported.id, undefined, { includeDeclaration: false, failOnScanError: true }, noCancellation);
+    assert.equal(references.length, 1); assert.equal(references[0].uri.toString(), localFileUri('/scenario/caller.feature'));
+});
+
 test('indexes compiler loop openings with ranges starting after their delimiters', async () => {
     for (const [template, opening, body] of [
         ['And I repeat "%1 Count" times', 'Do', 'I repeat "10" times'],
         ['И я делаю "%1 Count" раз', 'Цикл', 'я делаю "10" раз']
     ]) {
-        const loop = definition('loop', 'builtInStep', template, 'file:///library/loops.bsl', [
+        const loop = definition('loop', 'builtInStep', template, localFileUri("/library/loops.bsl"), [
             { name: 'Count', index: 0, source: 'quoted' }
         ]);
         const fileSystem = new VirtualFileSystem({
@@ -318,13 +340,13 @@ test('indexes YAML and feature calls with parameterized templates and exact rang
         'nested:checkout',
         'nestedScenario',
         'Checkout order',
-        'file:///scenario/checkout.yaml'
+        localFileUri("/scenario/checkout.yaml")
     );
     const user = definition(
         'user:click',
         'userStep',
         'And click "%1 button"',
-        'file:///library/steps.bsl',
+        localFileUri("/library/steps.bsl"),
         [{ name: 'button', index: 0, source: 'quoted' }]
     );
     const fileSystem = new VirtualFileSystem({
@@ -341,10 +363,10 @@ test('indexes YAML and feature calls with parameterized templates and exact rang
     );
 
     const nestedReferences = await service.findReferences(
-        nested.id, uri('file:///scenario/main.yaml'), { includeDeclaration: false }, noCancellation
+        nested.id, uri(localFileUri("/scenario/main.yaml")), { includeDeclaration: false }, noCancellation
     );
     const userReferences = await service.findReferences(
-        user.id, uri('file:///library/calls.feature'), { includeDeclaration: false }, noCancellation
+        user.id, uri(localFileUri("/library/calls.feature")), { includeDeclaration: false }, noCancellation
     );
 
     assert.equal(nestedReferences.length, 1);
@@ -356,10 +378,10 @@ test('indexes YAML and feature calls with parameterized templates and exact rang
 });
 
 test('keeps reference buckets separated by stable definition id', async () => {
-    const first = definition('user:first', 'userStep', 'And choose "%1 value" first', 'file:///lib/a.bsl', [
+    const first = definition('user:first', 'userStep', 'And choose "%1 value" first', localFileUri("/lib/a.bsl"), [
         { name: 'value', index: 0, source: 'quoted' }
     ]);
-    const second = definition('user:second', 'userStep', 'And choose "%1 value" second', 'file:///lib/b.bsl', [
+    const second = definition('user:second', 'userStep', 'And choose "%1 value" second', localFileUri("/lib/b.bsl"), [
         { name: 'value', index: 0, source: 'quoted' }
     ]);
     const fileSystem = new VirtualFileSystem({
@@ -378,8 +400,8 @@ test('keeps reference buckets separated by stable definition id', async () => {
 });
 
 test('collects references for several definitions in one source scan', async () => {
-    const first = definition('export:first', 'exportScenario', 'And use first export', 'file:///lib/exports.feature');
-    const second = definition('export:second', 'exportScenario', 'And use second export', 'file:///lib/exports.feature');
+    const first = definition('export:first', 'exportScenario', 'And use first export', localFileUri("/lib/exports.feature"));
+    const second = definition('export:second', 'exportScenario', 'And use second export', localFileUri("/lib/exports.feature"));
     const fileSystem = new VirtualFileSystem({
         '/scenario/main.yaml': {
             text: 'ТекстСценария: |\n    And use first export\n    And use second export\n'
@@ -393,7 +415,7 @@ test('collects references for several definitions in one source scan', async () 
 
     const references = await service.findReferencesForDefinitions(
         [first.id, second.id],
-        uri('file:///scenario/main.yaml'),
+        uri(localFileUri("/scenario/main.yaml")),
         { includeDeclaration: false },
         noCancellation
     );
@@ -405,8 +427,8 @@ test('collects references for several definitions in one source scan', async () 
 });
 
 test('build invalidation finds export callers in native scripts and legacy YAML through runtime library calls', async () => {
-    const leaf = definition('export:leaf', 'exportScenario', 'And leaf step', 'file:///library/leaf.feature');
-    const middle = definition('export:middle', 'exportScenario', 'And middle step', 'file:///library/middle.feature');
+    const leaf = definition('export:leaf', 'exportScenario', 'And leaf step', localFileUri("/library/leaf.feature"));
+    const middle = definition('export:middle', 'exportScenario', 'And middle step', localFileUri("/library/middle.feature"));
     const fileSystem = new VirtualFileSystem({
         '/library/middle.feature': { text: 'Feature: library\nScenario: middle step\n    And leaf step\n' },
         '/tests/native/scen.feature': { text: 'And middle step\n' },
@@ -418,17 +440,17 @@ test('build invalidation finds export callers in native scripts and legacy YAML 
         { path: '/library', extensions: ['.feature'] }, { path: '/tests', extensions: ['.yaml', '.feature'] }
     ]);
     const services = { resolver: resolverFor(definitions), references } as any;
-    const callers = await findExportScenarioBuildCallers(uri('file:///library/leaf.feature') as any, services);
+    const callers = await findExportScenarioBuildCallers(uri(localFileUri("/library/leaf.feature")) as any, services);
     assert.deepEqual(new Set(callers.map(item => item.toString())), new Set([
-        'file:///library/middle.feature', 'file:///tests/native/scen.feature', 'file:///tests/legacy/scen.yaml'
+        localFileUri("/library/middle.feature"), localFileUri("/tests/native/scen.feature"), localFileUri("/tests/legacy/scen.yaml")
     ]));
     assert.equal(fileSystem.reads, 4);
-    await findExportScenarioBuildCallers(uri('file:///library/leaf.feature') as any, services);
+    await findExportScenarioBuildCallers(uri(localFileUri("/library/leaf.feature")) as any, services);
     assert.equal(fileSystem.reads, 4, 'unchanged caller contents should be reused');
 });
 
 test('honors declaration inclusion independently of usages', async () => {
-    const nested = definition('nested:only', 'nestedScenario', 'Only scenario', 'file:///scenario/only.yaml');
+    const nested = definition('nested:only', 'nestedScenario', 'Only scenario', localFileUri("/scenario/only.yaml"));
     const fileSystem = new VirtualFileSystem({
         '/scenario/main.yaml': { text: 'ТекстСценария: |\n    And Only scenario\n' }
     });
@@ -441,17 +463,17 @@ test('honors declaration inclusion independently of usages', async () => {
 
     assert.equal(without.length, 1);
     assert.equal(withDeclaration.length, 2);
-    assert.ok(withDeclaration.some(item => item.uri.toString() === 'file:///scenario/only.yaml'));
+    assert.ok(withDeclaration.some(item => item.uri.toString() === localFileUri("/scenario/only.yaml")));
 });
 
 test('open unsaved documents override disk content', async () => {
-    const first = definition('nested:disk', 'nestedScenario', 'Disk call', 'file:///defs/disk.yaml');
-    const second = definition('nested:open', 'nestedScenario', 'Open call', 'file:///defs/open.yaml');
+    const first = definition('nested:disk', 'nestedScenario', 'Disk call', localFileUri("/defs/disk.yaml"));
+    const second = definition('nested:open', 'nestedScenario', 'Open call', localFileUri("/defs/open.yaml"));
     const fileSystem = new VirtualFileSystem({
         '/scenario/main.yaml': { text: 'ТекстСценария: |\n    And Disk call\n' }
     });
     const openDocument = {
-        uri: uri('file:///scenario/main.yaml'),
+        uri: uri(localFileUri("/scenario/main.yaml")),
         fileName: '/scenario/main.yaml',
         version: 7,
         isUntitled: false,
@@ -467,7 +489,7 @@ test('open unsaved documents override disk content', async () => {
 });
 
 test('deduplicates aliased roots and invalidates only a changed file', async () => {
-    const nested = definition('nested:cache', 'nestedScenario', 'Cached call', 'file:///defs/cache.yaml');
+    const nested = definition('nested:cache', 'nestedScenario', 'Cached call', localFileUri("/defs/cache.yaml"));
     const fileSystem = new VirtualFileSystem({
         '/root/a.yaml': { text: 'And Cached call\n', mtimeMs: 1 },
         '/root/b.yaml': { text: 'And Cached call\n', mtimeMs: 1 }
@@ -499,7 +521,7 @@ test('returns workspace-facing URIs while reading files through a canonical root
         'nested:workspace-uri',
         'nestedScenario',
         'Workspace call',
-        'file:///workspace/definition.yaml'
+        localFileUri("/workspace/definition.yaml")
     );
     const fileSystem = new VirtualFileSystem({
         '/physical/main.yaml': { text: 'And Workspace call\n' }
@@ -513,17 +535,17 @@ test('returns workspace-facing URIs while reading files through a canonical root
 
     const references = await service.findReferences(
         nested.id,
-        uri('file:///workspace/definition.yaml'),
+        uri(localFileUri("/workspace/definition.yaml")),
         { includeDeclaration: false },
         noCancellation
     );
 
     assert.equal(references.length, 1);
-    assert.equal(references[0].uri.toString(), 'file:///workspace/main.yaml');
+    assert.equal(references[0].uri.toString(), localFileUri("/workspace/main.yaml"));
 });
 
 test('bounds concurrent reads and cancels without publishing partial results', async () => {
-    const nested = definition('nested:many', 'nestedScenario', 'Many call', 'file:///defs/many.yaml');
+    const nested = definition('nested:many', 'nestedScenario', 'Many call', localFileUri("/defs/many.yaml"));
     const files = Object.fromEntries(Array.from({ length: 8 }, (_, index) => [
         `/scenario/${index}.yaml`,
         { text: 'And Many call\n' }
@@ -556,13 +578,13 @@ test('bounds concurrent reads and cancels without publishing partial results', a
 });
 
 test('reference provider resolves a stable id from a BSL declaration range', async () => {
-    const user = definition('user:declaration', 'userStep', 'And declared step', 'file:///lib/steps.bsl');
+    const user = definition('user:declaration', 'userStep', 'And declared step', localFileUri("/lib/steps.bsl"));
     const resolver = resolverFor([user]);
     const calls: Array<{ id: string; includeDeclaration: boolean }> = [];
     const service = {
         findReferences: async (id: string, _resource: unknown, options: { includeDeclaration: boolean }) => {
             calls.push({ id, includeDeclaration: options.includeDeclaration });
-            return [new (vscode.Location as any)(uri('file:///usage.feature'), new Range(3, 4, 3, 17))];
+            return [new (vscode.Location as any)(uri(localFileUri("/usage.feature")), new Range(3, 4, 3, 17))];
         }
     };
     const exports = loadReferencesModule();
@@ -572,7 +594,7 @@ test('reference provider resolves a stable id from a BSL declaration range', asy
     ) => { provideReferences: (...args: any[]) => Promise<unknown[]> };
     const provider = new Provider(service, resolver);
     const document = {
-        uri: uri('file:///lib/steps.bsl'),
+        uri: uri(localFileUri("/lib/steps.bsl")),
         lineAt: () => ({ text: '    Дано("And declared step")' })
     };
 
@@ -589,16 +611,16 @@ test('reference provider resolves a stable id from a BSL declaration range', asy
 
 test('current-scenario resolution uses the open document instead of the cursor line', async () => {
     const nested = definition(
-        'file:///scenario/current.yaml',
+        localFileUri("/scenario/current.yaml"),
         'nestedScenario',
         'Current scenario',
-        'file:///scenario/current.yaml'
+        localFileUri("/scenario/current.yaml")
     );
     const calledFromCurrentLine = definition(
-        'file:///scenario/called.yaml',
+        localFileUri("/scenario/called.yaml"),
         'nestedScenario',
         'Called scenario',
-        'file:///scenario/called.yaml'
+        localFileUri("/scenario/called.yaml")
     );
     const exports = loadReferencesModule();
     const resolveForDocument = exports.resolveProjectDefinitionIdsForDocument as (
@@ -607,7 +629,7 @@ test('current-scenario resolution uses the open document instead of the cursor l
         token: object
     ) => Promise<string[]>;
     const document = {
-        uri: uri('file:///scenario/current.yaml'),
+        uri: uri(localFileUri("/scenario/current.yaml")),
         lineAt: () => ({ text: 'And Called scenario' })
     };
 
@@ -626,4 +648,44 @@ test('activation stays lazy and registers Shift+F12 for YAML, feature, and BSL f
     assert.match(extension, /registerReferenceProvider\(/);
     assert.match(extension, /pattern: '\*\*\/\*\.bsl', scheme: 'file'/);
     assert.doesNotMatch(extension, /await\s+projectDefinitionReferenceService\.(?:scan|findReferences)\(/);
+});
+
+test('current-scenario references normalize Windows URI spelling for metadata and implementations', async () => {
+    const nested = definition('own', 'nestedScenario', 'Own', 'file:///C:/Git/Tests/scen.yaml');
+    const other = definition('other', 'nestedScenario', 'Other', 'file:///C:/Git/Tests/other/scen.yaml');
+    const exports = loadReferencesModule();
+    const resolve = exports.resolveProjectDefinitionIdsForDocument as (...args: any[]) => Promise<string[]>;
+    const resolver = resolverFor([nested, other]);
+    const document = { uri: uri('file:///c%3A/git/tests/scen.yaml'), lineAt: () => ({ text: 'And Other' }) };
+    assert.deepEqual(Array.from(await resolve(document, resolver, noCancellation)), [nested.id]);
+    const atPosition = exports.resolveProjectDefinitionIdsAtPosition as (...args: any[]) => Promise<string[]>;
+    assert.deepEqual(Array.from(await atPosition(document, new Position(1, 4), resolver, noCancellation)), [nested.id]);
+    const step = { ...nested, id: 'implementation', kind: 'userStep' as const, definitionLocation: undefined,
+        implementationLocation: { ...nested.definitionLocation!, uri: 'file:///C:/Git/Steps/module.bsl' } };
+    assert.deepEqual(Array.from(await resolve({ uri: uri('file:///c%3A/git/steps/module.bsl') }, resolverFor([step]), noCancellation)), [step.id]);
+});
+
+test('native current-scenario references resolve paired metadata without selecting the call under the cursor', async () => {
+    const script = localFileUri('/scenario/own/scen.feature'); const metadata = localFileUri('/scenario/own/meta.yaml');
+    const own = definition('own', 'nestedScenario', 'Own', metadata);
+    const other = definition('other', 'nestedScenario', 'Other', localFileUri('/scenario/other/meta.yaml'));
+    const exports = loadReferencesModule(new Map([[script, metadata]])); const resolver = resolverFor([own, other]);
+    const resolve = exports.resolveProjectDefinitionIdsForDocument as (...args: any[]) => Promise<string[]>;
+    const atPosition = exports.resolveProjectDefinitionIdsAtPosition as (...args: any[]) => Promise<string[]>;
+    const document = { uri: uri(script), lineAt: () => ({ text: 'And Other' }) };
+    assert.deepEqual(Array.from(await resolve(document, resolver, noCancellation)), [own.id]);
+    assert.deepEqual(Array.from(await atPosition(document, new Position(5, 4), resolver, noCancellation)), [other.id]);
+    assert.deepEqual(Array.from(await atPosition({ uri: uri(script), lineAt: () => ({ text: '' }) }, new Position(6, 0), resolver, noCancellation)), [own.id]);
+    assert.deepEqual(Array.from(await resolve(document, resolver, { isCancellationRequested: true })), []);
+});
+
+test('a standalone scen.feature is not associated with unvalidated neighbouring metadata', async () => {
+    const script = localFileUri('/scenario/own/scen.feature');
+    const own = definition('own', 'nestedScenario', 'Own', localFileUri('/scenario/own/meta.yaml'));
+    const exports = loadReferencesModule();
+    const resolve = exports.resolveProjectDefinitionIdsForDocument as (...args: any[]) => Promise<string[]>;
+    assert.deepEqual(Array.from(await resolve({ uri: uri(script) }, resolverFor([own]), noCancellation)), []);
+    const manifest = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+    const menu = manifest.contributes.menus['kotTestToolkit.editorContext'].find((item: any) => item.command === 'kotTestToolkit.editorMenu.findCurrentFileReferences');
+    assert.match(menu.when, /resourceExtname == \.feature/u);
 });

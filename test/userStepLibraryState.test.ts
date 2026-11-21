@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -15,6 +16,7 @@ test('Windows library lookup stops at its root despite path casing differences',
     const source = await fs.readFile(path.join(process.cwd(), 'src/userStepLibraryState.ts'), 'utf8');
     vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText, {
         exports, require: (id: string) => {
+            if (id === './kotInteraction') { return nativeInteraction; }
             if (id === 'node:path') { return path.win32; }
             if (id === 'node:fs') { return { promises: { readFile: missing, stat: missing, readdir: async (directory: string) => {
                 visited.push(directory);

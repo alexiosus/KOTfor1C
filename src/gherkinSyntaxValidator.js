@@ -22,7 +22,7 @@ function maskVanessaSections(source) {
         if (variables) { return line.replace(/[^\r]/gu, ' '); }
         if (!inDocString && /^\s*@(?:screenshot|recordvideo|StopRecordVideo|StartRecordVideo)\s*$/iu.test(line)) {
             const next = lines.slice(index + 1).find(value => value.trim() && !/^\s*(?:#|\/\/|@)/u.test(value));
-            if (next && /^\s*(?:\*\s*|(?:Given|When|Then|And|But|If|Дано|Допустим|Когда|Тогда|И|Но|К тому же|Если)\s)/iu.test(next)) {
+            if (next && /^\s*(?:\*\s*|(?:Given|When|Then|And|But|If|Дано|Затем|Пусть|То|А|Допустим|Когда|Тогда|И|Но|К тому же|Если)\s)/iu.test(next)) {
                 return line.replace(/[^\r]/gu, ' ');
             }
         }
@@ -56,7 +56,7 @@ function maskVanessaMetadata(source) {
             value => value.replace(/[^\r\n]/gu, ' ')
         )
         .replace(
-            /^(\s*)\*(?=(?:And|But|Then|When|Given|If|И|Но|Тогда|Когда|Если|Допустим|Дано|К тому же)\s)/gimu,
+            /^(\s*)\*(?=(?:And|But|Then|When|Given|If|И|Но|Тогда|Когда|Если|Затем|Пусть|То|А|Допустим|Дано|К тому же)\s)/gimu,
             (_value, indent) => `${indent} `
         )
         .replace(

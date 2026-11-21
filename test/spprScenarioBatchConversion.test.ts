@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -33,8 +34,8 @@ async function fixture(t: test.TestContext) {
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/spprScenarioBatchConversion.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
     }).outputText, { module, exports: module.exports, process, console,
-        require: (name: string) => name === 'vscode' ? host : name === './spprScenarioFormat' ? format
-            : name === './projectLibraryStore' ? { waitForProjectLibraryIdle: async () => undefined } : require(name) });
+        require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === 'vscode' ? host : name === './spprScenarioFormat' ? format
+            : name === './projectLibraryStore' ? { waitForProjectLibraryIdle: async () => undefined } : require(name)) });
     const create = async (name: string, text = metadata + 'ТекстСценария: |\n    And step\n') => {
         const directory = path.join(root, name); await fsp.mkdir(directory); await fsp.writeFile(path.join(directory, 'scen.yaml'), text);
         return scenario(directory, name);

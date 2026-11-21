@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import { isUserStepAvailable } from '../src/projectDefinition';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -67,6 +68,7 @@ test('multiline step documentation renders each localized template as a code blo
         module: moduleObject,
         exports: moduleObject.exports,
         require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === './projectDefinition') { return { isUserStepAvailable }; }
             if (specifier === 'vscode') {
                 return vscode;

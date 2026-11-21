@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import { permitsNativeScenario, assertProjectFormat3, projectFormatRoot } from './projectFormat';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -19,6 +20,8 @@ import type { ScenarioCatalog } from './scenarioCatalog';
 import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
 import type { ProjectDefinitionReferenceService } from './projectDefinitionReferences';
 import type { ExportScenarioLibraryRoot } from './exportScenarioCommand';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 export interface CallableConversionServices {
     resolver: ProjectDefinitionResolver;
@@ -56,10 +59,10 @@ async function chooseExistingFeature(services: CallableConversionServices, resou
     }
     choices.sort((left, right) => left.label.localeCompare(right.label) || (left.description ?? '').localeCompare(right.description ?? ''));
     choices.push({ targetKind: 'browse', label: `$(folder-opened) ${t('Choose another feature file…')}` });
-    const selected = await vscode.window.showQuickPick(choices, { title: t('Existing feature file'),
+    const selected = await kotUi.showQuickPick(choices, { title: t('Existing feature file'),
         placeHolder: t('Select a library feature or choose another file'), matchOnDescription: true, matchOnDetail: true, ignoreFocusOut: true });
     if (!selected) { return; }
-    return selected.targetKind === 'library' ? selected.uri : (await vscode.window.showOpenDialog({ title: t('Existing feature file'),
+    return selected.targetKind === 'library' ? selected.uri : (await kotUi.showOpenDialog({ title: t('Existing feature file'),
         defaultUri: vscode.Uri.file(base), canSelectMany: false, canSelectFolders: false, filters: { Feature: ['feature'] } }))?.[0];
 }
 interface Archive { version: 1; title: string; source: string; format: 'legacy' | 'native'; sidecar?: string; originalFolder?: string }
@@ -170,7 +173,7 @@ export async function handleConvertCallableScenario(services: CallableConversion
                 throw new Error(t('This scenario is used by a process. A process step cannot directly call an exported scenario.'));
             }
             const draft = nestedExportDraft(source);
-            const answer = await vscode.window.showInputBox({ title: t('Convert to exported scenario'), value: draft.title,
+            const answer = await kotUi.showInputBox({ title: t('Convert to exported scenario'), value: draft.title,
                 prompt: t('Keep every scenario parameter as a quoted argument in the name.'), ignoreFocusOut: true,
                 validateInput: value => { try { validateNestedExportTitle(draft.parameters, value); return undefined; } catch (error) { return callableConversionErrorText(error, t); } } });
             if (answer === undefined) { return; }
@@ -180,12 +183,12 @@ export async function handleConvertCallableScenario(services: CallableConversion
             const sameFolder = roots.some(root => within(uri.fsPath, vscode.Uri.parse(root.uri).fsPath));
             const base = sameFolder || !roots.length ? path.dirname(uri.fsPath) : vscode.Uri.parse(roots[0].uri).fsPath;
             const name = (descriptor.scenarioCode || 'exports').replace(/[\\/:*?"<>|]/gu, '_');
-            const choice = await vscode.window.showQuickPick([
+            const choice = await kotUi.showQuickPick([
                 { label: t('New feature file'), mode: 'new' as const }, { label: t('Existing feature file'), mode: 'existing' as const }
             ], { title: t('Export destination'), ignoreFocusOut: true });
             if (!choice) { return; }
             const destination = choice.mode === 'new'
-                ? await vscode.window.showSaveDialog({ title: t('Export scenario file'), defaultUri: vscode.Uri.file(path.join(base, `${name}.feature`)), filters: { Feature: ['feature'] } })
+                ? await kotUi.showSaveDialog({ title: t('Export scenario file'), defaultUri: vscode.Uri.file(path.join(base, `${name}.feature`)), filters: { Feature: ['feature'] } })
                 : await chooseExistingFeature(services, uri, roots, base);
             if (!destination) { return; }
             if (destination.scheme !== 'file' || !/\.feature$/iu.test(destination.fsPath) || originals.has(destination.fsPath)) { throw new Error(t('Choose a new local .feature file for the export library.')); }
@@ -208,12 +211,12 @@ export async function handleConvertCallableScenario(services: CallableConversion
             if (!choices.length) { throw new Error(t('Choose an exported scenario declaration.')); }
             const line = selectedLine ?? (vscode.window.activeTextEditor?.document.uri.toString() === uri.toString() ? vscode.window.activeTextEditor.selection.active.line : undefined);
             definition = choices.find(item => item.definitionLocation?.range.start.line === line);
-            if (!definition) { definition = choices.length === 1 ? choices[0] : (await vscode.window.showQuickPick(choices.map(item => ({ label: item.template, definition: item })), { title: t('Choose exported scenario'), ignoreFocusOut: true }))?.definition; }
+            if (!definition) { definition = choices.length === 1 ? choices[0] : (await kotUi.showQuickPick(choices.map(item => ({ label: item.template, definition: item })), { title: t('Choose exported scenario'), ignoreFocusOut: true }))?.definition; }
             if (!definition) { return; }
             const archiveText = await savedOptional(uri.fsPath + '.kot-nested.json');
             const archives = readArchives(archiveText);
             const archive = archives.find(item => item.title === definition!.template) ?? (choices.length === 1 && archives.length === 1 ? archives[0] : undefined);
-            const answer = await vscode.window.showInputBox({ title: t('Convert to nested scenario'), value: archive ? parseScenarioDescriptor(archive.source).name : definition.template.replace(/(["']).*?\1/gu, '').replace(/\s+/gu, ' ').trim(),
+            const answer = await kotUi.showInputBox({ title: t('Convert to nested scenario'), value: archive ? parseScenarioDescriptor(archive.source).name : definition.template.replace(/(["']).*?\1/gu, '').replace(/\s+/gu, ' ').trim(),
                 prompt: t('Enter nested scenario name'), ignoreFocusOut: true, validateInput: value => { try { validateCallableName(value); return undefined; } catch (error) { return t((error as Error).message); } } });
             if (answer === undefined) { return; }
             const converted = exportToNested(feature, definition.definitionLocation!.range.start.line, answer, archive?.source);
@@ -222,7 +225,7 @@ export async function handleConvertCallableScenario(services: CallableConversion
             const previousFolder = archive?.originalFolder === undefined ? path.dirname(uri.fsPath) : path.resolve(path.dirname(uri.fsPath), archive.originalFolder);
             const folder = roots.length && !roots.some(root => within(previousFolder, root)) ? path.join(roots[0], code) : previousFolder;
             const preferredFormat = !permitsNativeScenario(folder) ? 'legacy' : archive?.format ?? vscode.workspace.getConfiguration('kotTestToolkit', uri).get<string>('newScenarioDefaults.format', 'native');
-            const destination = await vscode.window.showSaveDialog({ title: t('Nested scenario file'), defaultUri: vscode.Uri.file(path.join(folder, preferredFormat === 'native' ? 'meta.yaml' : 'scen.yaml')), filters: { YAML: ['yaml'] } });
+            const destination = await kotUi.showSaveDialog({ title: t('Nested scenario file'), defaultUri: vscode.Uri.file(path.join(folder, preferredFormat === 'native' ? 'meta.yaml' : 'scen.yaml')), filters: { YAML: ['yaml'] } });
             if (!destination) { return; }
             if (destination.scheme !== 'file' || roots.length && !roots.some(root => within(destination.fsPath, root))) { throw new Error(t('Choose a destination inside a configured SPPR scenario folder.')); }
             if (!['scen.yaml', 'meta.yaml'].includes(path.basename(destination.fsPath))) { throw new Error(t('Choose scen.yaml or meta.yaml as the nested scenario filename.')); }
@@ -321,7 +324,7 @@ export async function handleConvertCallableScenario(services: CallableConversion
         }
         await services.refresh(changes.filter(change => change.before !== change.after).map(change => vscode.Uri.file(change.path)));
         await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(resultUri), { preview: false });
-        void vscode.window.showInformationMessage(t('Scenario converted successfully. Existing calls were updated.'));
+        void kotUi.showInformationMessage(t('Scenario converted successfully. Existing calls were updated.'));
         return { sourceUri: resultUri.toString() };
-    } catch (error) { void vscode.window.showErrorMessage(t('Could not convert the scenario: {0}', callableConversionErrorText(error, t))); }
+    } catch (error) { void kotUi.showErrorMessage(t('Could not convert the scenario: {0}', callableConversionErrorText(error, t))); }
 }

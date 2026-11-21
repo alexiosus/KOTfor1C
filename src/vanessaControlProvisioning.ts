@@ -10,6 +10,13 @@ export const VANESSA_MCP_COMPONENT = Object.freeze({
     sha256: 'eaf065440a32a60eaa07c78fe7ed39c6b2c331db915e91328391af07364422fe'
 });
 
+/** Client-side data tools shipped with Vanessa Automation 1.2.043.47. */
+export const VANESSA_CLIENT_EXTENSION = Object.freeze({
+    version: '1.43', name: 'VAExtension',
+    url: 'https://github.com/Pr-Mex/vanessa-automation/releases/download/1.2.043.47/VAExtension.1.43.cfe',
+    sha256: '1d1c8a3445091f4db0fb9b0c533c159eaa594c08f030573a186c3858052553e5'
+});
+
 /** Call only after a successful fresh DT restore, never to infer the contents of an existing IB. */
 export async function recordBundledMcpComponents(templatePath: string, baseDirectory: string): Promise<boolean> {
     let manifest;

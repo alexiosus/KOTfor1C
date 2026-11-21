@@ -34,6 +34,20 @@ export function isExecutableFeatureLine(source: VanessaFeatureDocument, line: nu
     return !!getGherkinStepAnnotationTarget({ ...source, language: parseStandaloneFeatureSource(source.text, '').language }, line);
 }
 
+/** Vanessa runFromLine accepts a step inside a tree group, not its heading. */
+export function resolveVanessaStepLine(source: VanessaFeatureDocument, line: number, mode: 'oneStep' | 'runFromLine'): number {
+    const lines = source.text.split(/\r\n|\n|\r/u);
+    if (mode !== 'runFromLine' || !/^\s*\*/u.test(lines[line] ?? '')) { return line; }
+    const width = /^[ \t]*/u.exec(lines[line])![0].length;
+    for (let index = line + 1; index < lines.length; index++) {
+        const text = lines[index];
+        if (!text.trim() || /^\s*(?:#|\/\/|@)/u.test(text)) { continue; }
+        if (/^[ \t]*/u.exec(text)![0].length <= width) { break; }
+        if (!/^\s*\*/u.test(text) && isExecutableFeatureLine(source, index)) { return index; }
+    }
+    throw new Error('The selected group has no executable steps.');
+}
+
 /** Native save and active-document checks precede every remote mutation. No work is queued on repeated F11. */
 export class VanessaFeatureControl {
     private busy = false;
@@ -51,21 +65,7 @@ export class VanessaFeatureControl {
             throw new Error('Select a scenario step. Background cannot be a starting point.');
         }
         if (collectGherkinSyntaxErrors(source.text).length) { throw new Error('Fix the feature syntax before executing a step.'); }
-        let executionLine = source.line;
-        const lines = source.text.split(/\r\n|\n|\r/u);
-        if (mode === 'runFromLine' && /^\s*\*/u.test(lines[source.line])) {
-            // Native run_scenario rejects tree headings even though they are
-            // valid editor annotation targets. Stay strictly inside this group.
-            const width = target.indentation.length;
-            executionLine = -1;
-            for (let index = source.line + 1; index < lines.length; index++) {
-                const text = lines[index];
-                if (!text.trim() || /^\s*(?:#|\/\/|@)/u.test(text)) { continue; }
-                if (/^[ \t]*/u.exec(text)![0].length <= width) { break; }
-                if (!/^\s*\*/u.test(text) && isExecutableFeatureLine(source, index)) { executionLine = index; break; }
-            }
-            if (executionLine < 0) { throw new Error('The selected group has no executable steps.'); }
-        }
+        const executionLine = resolveVanessaStepLine(source, source.line, mode);
         this.busy = true;
         try {
             await prepareSavedVanessaFeature(source, this.ports);

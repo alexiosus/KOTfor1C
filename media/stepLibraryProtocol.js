@@ -40,7 +40,7 @@
     function tokenizeGherkinText(value) {
         const source = String(value || '');
         const result = [];
-        const pattern = /(^[ \t]*)(Given|When|Then|And|But|If|Допустим|Пусть|К тому же|Также|Дано|Когда|Тогда|Если|И|Но)(?=[ \t]|$)|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|<[^>\r\n]+>|%\d+(?:[ \t]+[^\s"'|<>]+)?|\|/gimu;
+        const pattern = /(^[ \t]*)(Given|When|Then|And|But|If|Затем|Пусть|То|А|Допустим|К тому же|Также|Иначе|Дано|Когда|Тогда|Если|И|Но)(?=[ \t]|$)|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|<[^>\r\n]+>|%\d+(?:[ \t]+[^\s"'|<>]+)?|\|/gimu;
         let cursor = 0;
         const append = (kind, text) => {
             if (!text) {

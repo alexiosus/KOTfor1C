@@ -128,17 +128,6 @@ export class ScenarioHeaderInlayHintsProvider implements vscode.InlayHintsProvid
                 ));
             }
 
-            const descriptionActionLine = fieldLines.kotDescriptionLine ?? (!isProcess ? metadataActionLine : null);
-            if (descriptionActionLine !== null) {
-                hints.push(createActionHint(
-                    document,
-                    descriptionActionLine,
-                    'kotTestToolkit.generateScenarioDescriptionWithAi',
-                    vscode.l10n.t('Describe with AI'),
-                    ` ${vscode.l10n.t('Describe with AI')} `
-                ));
-            }
-
             return hints;
         }
 

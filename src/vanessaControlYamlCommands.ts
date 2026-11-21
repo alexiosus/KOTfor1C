@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import fs from 'node:fs/promises';
 import { VanessaYamlControl, type VanessaYamlBuild, type VanessaYamlTarget } from './vanessaControlYaml';
@@ -7,6 +8,8 @@ import { sameVanessaFeaturePath, type VanessaControlSession } from './vanessaCon
 import type { VanessaFeatureDocument } from './vanessaControlFeature';
 import { VanessaExecutionHighlighter } from './vanessaControlHighlighting';
 import type { VanessaBreakpointMarkers, VanessaGutterLocation } from './vanessaControlBreakpointMarkers';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 /** Uses the existing session and compiler output. The native YAML editor remains the source of truth. */
 export function createVanessaYamlControl(context: vscode.ExtensionContext, session: VanessaControlSession,
@@ -72,7 +75,7 @@ export function createVanessaYamlControl(context: vscode.ExtensionContext, sessi
         save: async () => !!await vscode.window.activeTextEditor?.document.save(),
         readText: file => fs.readFile(file, 'utf8'),
         choose: async locations => {
-            const selected = await vscode.window.showQuickPick(locations.map(location => ({ location,
+            const selected = await kotUi.showQuickPick(locations.map(location => ({ location,
                 label: `${location.feature}:${location.lineNumber}`, description: vscode.l10n.t('Build part {0}', location.worker) })),
             { title: vscode.l10n.t('Choose compiled invocation'), placeHolder: vscode.l10n.t('This YAML step occurs more than once in the compiled tests.') });
             return selected?.location;
@@ -91,7 +94,7 @@ export function createVanessaYamlControl(context: vscode.ExtensionContext, sessi
                     const lines = await session.synchronizeBreakpoints(target.filePath, undefined, isCurrent, target.featureText);
                     const owned = session.snapshot.breakpoints!.ownedLines; const line = target.location.lineNumber;
                     if (lines.includes(line) && !owned.includes(line)) {
-                        void vscode.window.showInformationMessage(vscode.l10n.t('This breakpoint was created in Vanessa. Remove it there; KOT preserves existing session breakpoints.'));
+                        void kotUi.showInformationMessage(vscode.l10n.t('This breakpoint was created in Vanessa. Remove it there; KOT preserves existing session breakpoints.'));
                     } else {
                         const keep = target.breakpointDesired ?? !owned.includes(line);
                         await session.synchronizeBreakpoints(target.filePath, keep ? [...new Set([...owned, line])] : owned.filter(value => value !== line), isCurrent, target.featureText);
@@ -99,10 +102,10 @@ export function createVanessaYamlControl(context: vscode.ExtensionContext, sessi
                     return { passed: false };
                 }
                 if (!context.workspaceState.get('kotTestToolkit.vanessaControl.preparationNotice', false)) {
-                    void vscode.window.showInformationMessage(vscode.l10n.t('Manual execution skips preceding steps and preparation. Existing Vanessa variables and test clients are reused.'));
+                    void kotUi.showInformationMessage(vscode.l10n.t('Manual execution skips preceding steps and preparation. Existing Vanessa variables and test clients are reused.'));
                     void context.workspaceState.update('kotTestToolkit.vanessaControl.preparationNotice', true);
                 }
-                await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification,
+                await kotUi.withProgress({ location: vscode.ProgressLocation.Notification,
                     title: vscode.l10n.t(mode === 'oneStep' ? 'Vanessa: execute one step' : 'Vanessa: run from this step') }, async () => {
                     if (mode === 'runFromLine' && session.snapshot.capabilities?.breakpoints.supported && session.snapshot.capabilities.loadFeature.supported &&
                         session.snapshot.capabilities.editor.supported && session.snapshot.capabilities.runCurrent.supported) {

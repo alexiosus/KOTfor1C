@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { parseExportScenarios } from './exportScenarioParser';
@@ -8,6 +9,8 @@ import { applyPreparedFileWrites } from './preparedFileWrites';
 import { createProjectDefinitionView, normalizeProjectDefinitionTemplate, type ProjectDefinition } from './projectDefinition';
 import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
 import type { ProjectDefinitionReferenceService } from './projectDefinitionReferences';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 interface Source { uri: vscode.Uri; text: string; document?: vscode.TextDocument; version?: number }
 const t = (message: string): string => vscode.l10n.t(message);
@@ -53,7 +56,7 @@ export async function renameStandaloneFeatureTitle(uri: vscode.Uri): Promise<boo
     const parsed = parseExportScenarios(source.text, parseContext(uri, source.text));
     if (!parsed.feature) { throw new Error(t('The feature declaration is no longer available.')); }
     const previous = parsed.feature.title;
-    const answer = await vscode.window.showInputBox({
+    const answer = await kotUi.showInputBox({
         title: t('Change feature title'), prompt: t('Feature title'), value: previous, ignoreFocusOut: true,
         validateInput: value => {
             try { planFeatureTitleRename(source.text, previous, value); return undefined; }
@@ -69,7 +72,7 @@ export async function renameStandaloneFeatureFile(
     uri: vscode.Uri, beforeRename?: () => Promise<void>
 ): Promise<vscode.Uri | undefined> {
     const source = await readSource(uri);
-    const answer = await vscode.window.showInputBox({
+    const answer = await kotUi.showInputBox({
         title: t('Rename feature file'), prompt: t('Feature filename'), value: path.basename(uri.fsPath), ignoreFocusOut: true,
         validateInput: value => {
             try { normalizeFeatureRenameFilename(value); return undefined; }
@@ -114,7 +117,7 @@ export async function renameExportScenario(
         }
         return plan;
     };
-    const answer = await vscode.window.showInputBox({
+    const answer = await kotUi.showInputBox({
         title: t('Rename export scenario'), prompt: t('Enter new scenario name'), value: definition.template, ignoreFocusOut: true,
         validateInput: value => { try { validate(value); return undefined; } catch (error) { return t((error as Error).message); } }
     });

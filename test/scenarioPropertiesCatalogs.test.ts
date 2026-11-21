@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import { v3FixtureSync } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -41,6 +42,7 @@ function harness(t: TestContext) {
     const file = path.join(process.cwd(), 'src/scenarioPropertiesCatalogs.ts');
     const compiled = ts.transpileModule(fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'export {};', { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
     vm.runInNewContext(compiled, { module, exports: module.exports, console, Buffer, require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
         switch (specifier.replace(/\.js$/u, '')) {
             case 'yaml': return { parseDocument };
             case 'vscode': return {
@@ -60,6 +62,7 @@ function harness(t: TestContext) {
                 const shared = { exports: {} }; const filename = path.join(process.cwd(), 'src/projectSystemFunctions.ts');
                 vm.runInNewContext(ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText,
                     { module: shared, exports: shared.exports, console, Buffer, require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
                         const key = specifier.replace(/\.js$/u, '');
                         if (key === 'vscode') { return { workspace: { textDocuments: dirty } }; }
                         if (key === './projectPropertyCatalogStore') { return storeModule; }
