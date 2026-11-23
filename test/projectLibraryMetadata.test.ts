@@ -220,6 +220,37 @@ test('duplicate scenario and process UIDs are rejected before any legacy data is
     } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
+test('the catalog loads duplicate source UIDs without borrowing another source’s shared metadata', async t => {
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-display-duplicate-')));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const first = scenario(root);
+    const copy = scenario(root, 'tests/copy/scen.yaml');
+    const unrelated = { ...scenario(root, 'tests/healthy/scen.yaml'), uid: 'healthy' };
+    await Promise.all([writeSource(first), writeSource(unrelated)]);
+    const store = new ProjectLibraryStore(root);
+    const group = await store.ensureGroup('Shared tests', 'main');
+    const identity = resolveProjectEntityIdentity(first.yamlFileUri.fsPath, root, 'scenario', first.uid);
+    await store.setMetadata(identity, { description: 'First only' });
+    await store.setMetadata(resolveProjectEntityIdentity(unrelated.yamlFileUri.fsPath, root, 'scenario', unrelated.uid),
+        { groupId: group.id, description: 'Healthy shared record' });
+    await writeSource(copy);
+    const noWrite = () => assert.fail('A duplicate UID must pause automatic metadata writes in this project');
+    const infos = [first, copy, unrelated];
+    const projected = await loadProjectScenarioMetadata(infos, [root], [root], true, noWrite, new Map(), undefined, 'display');
+    const refreshed = await reloadProjectScenarioMetadata(infos, [root], [root], noWrite);
+    for (const definitions of [projected, refreshed]) {
+        assert.deepEqual(definitions.map(item => item.yamlFileUri.fsPath), infos.map(item => item.yamlFileUri.fsPath));
+        assert.ok(definitions.slice(0, 2).every(item => item.scenarioDescription !== 'First only'));
+        assert.equal(definitions[2].scenarioDescription, 'Healthy shared record');
+        assert.equal(definitions[2].tabName, 'Shared tests');
+    }
+    assert.match(await fs.readFile(store.metadataFilePath(identity), 'utf8'), /First only/u);
+    await assert.rejects(fs.stat(copy.yamlFileUri.fsPath + '.kot.yml'), { code: 'ENOENT' });
+    await assert.rejects(store.setMetadata(resolveProjectEntityIdentity(copy.yamlFileUri.fsPath, root, 'scenario', copy.uid),
+        { description: 'Do not move the first sidecar' }), /Duplicate source UID/u);
+    assert.match(await fs.readFile(store.metadataFilePath(identity), 'utf8'), /First only/u);
+});
+
 test('project objects inside an external test root cannot match the stock compiler yaml inputs', async () => {
     const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-compiler-')));
     try {
