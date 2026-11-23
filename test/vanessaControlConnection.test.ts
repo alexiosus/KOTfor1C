@@ -6,10 +6,13 @@ import vm from 'node:vm';
 import { assessVanessaControlCapabilities, normalizeVanessaControlEndpoint } from '../src/vanessaControlProtocol';
 import { discoverVanessaControlEndpoints } from '../src/vanessaControlDiscovery';
 import { VanessaManagedRun } from '../src/vanessaControlManagedRun';
+import * as runtimeSettings from '../src/vanessaControlSettings';
 
 function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAttach = true,
-    startupOptions: { autoStart?: boolean; canAutoStart?: boolean; trusted?: boolean; recoveredLog?: string; useCurrent?: boolean } = {}) {
-    const tools = [{ name: 'get_vanessa_automation_state', inputSchema: { type: 'object', properties: {} } },
+    startupOptions: { autoStart?: boolean; canAutoStart?: boolean; trusted?: boolean; recoveredLog?: string; useCurrent?: boolean;
+        useTestJson?: boolean; confirmSettings?: boolean; editAfterRun?: boolean } = {}) {
+    const tools = startupOptions.useTestJson ? JSON.parse(fs.readFileSync('test/fixtures/vanessa-control/1.2.043.47/tools.live.json', 'utf8')).tools
+        : [{ name: 'get_vanessa_automation_state', inputSchema: { type: 'object', properties: {} } },
         { name: 'get_editor_state', inputSchema: { type: 'object', properties: { includeContent: { type: 'boolean' } } } }];
     const commands = new Map<string, () => Promise<unknown>>(); const inspected: string[] = []; const attached: string[] = [];
     const state = new Map<string, unknown>(); const prompts: unknown[][] = []; const errors: string[] = [];
@@ -19,6 +22,12 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
     const timers: Array<{ callback(): void; delay: number; active: boolean; unref(): void }> = [];
     const listeners: Array<(snapshot: unknown) => void> = [];
     const subscriptions: Array<{ dispose(): void }> = []; let launches = 0; let trusted = startupOptions.trusted !== false; let informationPrompts = 0;
+    const settingsCalls: Record<string, unknown>[] = [];
+    const runEvents: string[] = [];
+    const sessionChoices: string[][] = [];
+    const settingPath = 'RunningScripts.stoponerror';
+    let settingValue = 'false'; let revision = 1;
+    let chooseRestore: (answer: string) => void = () => { throw new Error('Restore was not offered'); };
     const status: any = { show() {}, hide() {}, dispose() {} };
     let resolvePorts: () => Promise<readonly number[]> = async () => candidatePorts;
     let initial!: () => void;
@@ -33,7 +42,24 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
         async detach() { this.snapshot = { generation: this.snapshot.generation + 1, status: 'detached' }; for (const notify of listeners) { notify(this.snapshot); } }
         async refreshState() {}
         ownedBreakpointsForSource() { return []; }
-        async run() { this.snapshot.execution = { status: 'passed' }; }
+        async run() {
+            runEvents.push(`run with ${settingValue}`);
+            if (startupOptions.editAfterRun) { settingValue = 'newer value'; }
+            this.snapshot.execution = { status: 'passed' };
+        }
+        async withSettingsControl<T>(work: (settings: runtimeSettings.VanessaRuntimeSettings) => Promise<T>, current: () => boolean) {
+            return work(new runtimeSettings.VanessaRuntimeSettings(async (_name, args) => {
+                assert.ok(current());
+                settingsCalls.push(args);
+                const action = String(args.action); const dryRun = args.dry_run === true;
+                if (action === 'set') { assert.equal(args.expected_current_value, settingValue); settingValue = String(args.value); revision++; }
+                if (action === 'apply' && !dryRun) { settingValue = 'true'; revision++; }
+                const changed = action === 'list' ? [] : [settingPath];
+                return { content: [{ type: 'text', text: JSON.stringify({ ok: true, revision, errors: [], warnings: [], ignored: [],
+                    out_of_scope: [], changed, applied: changed, dry_run: dryRun,
+                    items: [{ key: 'stoponerror', path: settingPath, current: settingValue, current_present: true, settable: true, type: 'boolean' }] }) }] };
+            }));
+        }
     }
     class Transport {
         endpoint = '';
@@ -56,7 +82,17 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
                 window: { createStatusBarItem: () => status,
                     showQuickPick: async (items: unknown[]) => { prompts.push(items); return items[1]; },
                     showInputBox: async () => { throw new Error('Unexpected endpoint input'); }, showErrorMessage: (error: string) => errors.push(error),
-                    showInformationMessage: async (_message: string, _options: unknown, current: string) => { informationPrompts++; return startupOptions.useCurrent ? current : undefined; },
+                    showInformationMessage: async (_message: string, options: unknown, ...actions: string[]) => {
+                        informationPrompts++;
+                        if (options === 'Restore previous settings') {
+                            runEvents.push('offer restore');
+                            return new Promise(resolve => { chooseRestore = resolve; });
+                        }
+                        if (typeof options === 'object') { sessionChoices.push(actions); }
+                        if (startupOptions.useTestJson && actions.includes('Apply test JSON to this session…')) { return 'Apply test JSON to this session…'; }
+                        return startupOptions.useCurrent ? actions[0] : undefined;
+                    },
+                    showWarningMessage: () => undefined,
                     withProgress: async (options: { title: string }, work: (progress: unknown, token: unknown) => Promise<unknown>) => { progressTitles.push(options.title); return work({}, { onCancellationRequested: noop, isCancellationRequested: false }); } },
                 commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return noop(); },
                     executeCommand: async (command: string, key: string, value: unknown) => { if (command === 'setContext') { contexts.set(key, value); } } } }; }
@@ -66,6 +102,13 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
             if (name === './vanessaControlReadiness') { return { awaitVanessaControlReady: async (attach: () => Promise<unknown>) => attach() }; }
             if (name === 'node:net') { return { createServer: () => ({ once() {}, listen(_port: number, _host: string, ready: () => void) { ready(); }, address: () => ({ port: 8888 }), close(done: () => void) { done(); } }) }; }
             if (name === './vanessaControlManagedRun') { return { VanessaManagedRun }; }
+            if (name === './vanessaControlSettings') { return runtimeSettings; }
+            if (name === './vanessaControlSettingsReport') { return { VanessaSettingsReport: class {
+                async confirm() { runEvents.push('confirm preview'); return startupOptions.confirmSettings !== false; }
+                show() {}
+                unconfirmed() { runEvents.push('unconfirmed'); }
+                dispose() {}
+            } }; }
             if (name === './vanessaControlDiscovery') { return { discoverVanessaControlEndpoints, localOneCListeningPorts: () => resolvePorts() }; }
             return require(name);
         } });
@@ -78,12 +121,52 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
         attachedRunLog: async () => startupOptions.recoveredLog, trackRun: (file: string, log?: string) => { tracked.push({ file, log }); return async () => {}; },
         launch: async () => { launches++; return true; }, canAutoStart: () => startupOptions.canAutoStart !== false });
     return { ...control, prompts, inspected, attached, errors, state, contexts, commands, status, tracked, progressTitles,
+        settingsCalls, runEvents, sessionChoices, chooseRestore: () => chooseRestore('Restore previous settings'),
+        setting: () => settingValue,
         expireHealthCheck: () => { const timer = timers.find(timer => timer.active && timer.delay === 3_000); assert.ok(timer); timer.callback(); },
         notify: (snapshot: unknown) => { for (const listener of listeners) { listener(snapshot); } }, setPorts: (value: typeof resolvePorts) => { resolvePorts = value; },
         launches: () => launches, informationPrompts: () => informationPrompts, trust: (value: boolean) => { trusted = value; },
         dispose: () => { for (const disposable of subscriptions) { disposable.dispose(); } },
         startup: async () => { initial(); for (let n = 0; n < 20; n++) { await new Promise<void>(resolve => setImmediate(resolve)); } } };
 }
+
+test('a compiled test applies its JSON in .47 and can restore confirmed values after the run', async () => {
+    for (const editAfterRun of [false, true]) {
+        const h = harness(['http://127.0.0.1:6000/mcp'], [6000], true, { useTestJson: true, editAfterRun });
+        try {
+            assert.equal(await h.ensureConnected(), true);
+            const result = await h.runFeature({ filePath: 'own.feature', sourceText: 'own', isCurrent: () => true, configurationKey: 'own',
+                settings: { parameters: '{"RunningScripts":{"stoponerror":true,"CloseSystemOnComplete":true},"textlogname":"different.log"}', basePath: '/own' },
+                launch: async () => { throw new Error('Unexpected new process'); } });
+            assert.equal(result, 'passed');
+            assert.deepEqual(h.runEvents, ['confirm preview', 'run with true', 'offer restore']);
+            const applies = h.settingsCalls.filter(call => call.action === 'apply');
+            assert.equal(applies.length, 2);
+            assert.deepEqual(applies.map(call => [call.dry_run, call.preserve_ci_flags, call.expected_revision]), [[true, true, 1], [false, true, 1]]);
+            assert.equal(applies[1].parameters_json, '{"RunningScripts":{"stoponerror":true}}');
+            h.chooseRestore();
+            await new Promise(resolve => setImmediate(resolve));
+            assert.equal(h.setting(), editAfterRun ? 'newer value' : 'false');
+            assert.equal(h.settingsCalls.some(call => call.action === 'set'), !editAfterRun);
+        } finally { h.dispose(); }
+    }
+});
+
+test('cancelling the VAParams preview makes no runtime writes, and .45 only offers its existing choices', async () => {
+    const request = { filePath: 'own.feature', sourceText: 'own', isCurrent: () => true,
+        settings: { parameters: '{"stoponerror":true}', basePath: '/own' }, launch: async () => false };
+    for (const useTestJson of [true, false]) {
+        const h = harness(['http://127.0.0.1:6000/mcp'], [6000], true, { useTestJson, confirmSettings: false });
+        try {
+            assert.equal(await h.ensureConnected(), true);
+            assert.equal(await h.runFeature(request), 'cancelled');
+            assert.deepEqual(h.sessionChoices[0].slice(-2), ['Run with current session settings', 'Prepare configured session']);
+            assert.equal(h.sessionChoices[0].includes('Apply test JSON to this session…'), useTestJson);
+            assert.equal(h.settingsCalls.filter(call => call.action === 'apply' && call.dry_run === false).length, 0);
+            assert.deepEqual(h.runEvents, useTestJson ? ['confirm preview'] : []);
+        } finally { h.dispose(); }
+    }
+});
 
 test('editor execution controls reset after completion and disable repeated stop while stopping', () => {
     const h=harness([]);const executing=()=>h.contexts.get('kotTestToolkit.vanessaControlExecuting');

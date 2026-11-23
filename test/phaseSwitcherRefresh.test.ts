@@ -156,6 +156,8 @@ test('managed Test Manager run keeps authored settings and reports the confirmed
         provider.attachVanessaManagedRunner(async (request: any) => {
             assert.equal(request.filePath, feature); assert.equal(request.sourceText, fs.readFileSync(feature, 'utf8')); assert.ok(request.isCurrent());
             assert.match(request.configurationKey, /^[a-f0-9]{64}$/u);
+            assert.equal(request.settings.parameters, '{"ownSetting":true}');
+            assert.equal(request.settings.basePath, root);
             assert.equal(await request.launch(9877), true);
             fs.writeFileSync(json, '{"ownSetting":false}'); assert.equal(request.isCurrent(), false, 'changed launch settings invalidate the pending request');
             return 'failed';

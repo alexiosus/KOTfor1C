@@ -6,6 +6,8 @@ import { VanessaControlHttpTransport } from './vanessaControlTransport';
 import { normalizeVanessaControlEndpoint, assessVanessaControlCapabilities } from './vanessaControlProtocol';
 import { awaitVanessaControlReady } from './vanessaControlReadiness';
 import { VanessaManagedRun, type VanessaManagedRunRequest, type VanessaManagedRunResult } from './vanessaControlManagedRun';
+import { prepareVanessaRunSettings, restoreVanessaRunSettings, vanessaSettingsToRestore, type VanessaSettingsReply } from './vanessaControlSettings';
+import { VanessaSettingsReport } from './vanessaControlSettingsReport';
 import fs from 'node:fs/promises';
 import { discoverVanessaControlEndpoints, localOneCListeningPorts } from './vanessaControlDiscovery';
 
@@ -248,34 +250,123 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
         }
         return connectionAttempt;
     };
+    let settingsReport: VanessaSettingsReport | undefined;
+    let settingsApplication = 0;
+    let pausedRestore: (() => void) | undefined;
     const managed = new VanessaManagedRun({ start: startConfigured,
         currentGeneration: () => !disposed && !session.busy && session.snapshot.status === 'ready' && session.snapshot.capabilities ? session.snapshot.generation : undefined,
-        chooseSession: async () => {
+        canApplySettings: () => {
+            const capabilities = session.snapshot.capabilities;
+            return !!(capabilities?.settingsRead.supported && capabilities.settingsWrite.supported && capabilities.settingsPreserveCi.supported);
+        },
+        chooseSession: async canApply => {
             const current = vscode.l10n.t('Run with current session settings');
             const configured = vscode.l10n.t('Prepare configured session');
+            const apply = vscode.l10n.t('Apply test JSON to this session…');
             const selected = await kotUi.showInformationMessage(vscode.l10n.t('The connected Vanessa session has different or unverified parameters. Choose which settings to use for these test parameters while this session stays connected.'),
-                { modal: true }, current, configured);
-            return selected === current ? 'current' : selected === configured ? 'configured' : 'cancelled';
-        }, run: async (filePath, sourceText, isCurrent, breakpointLines) => {
-        if (breakpointLines?.length) { await session.synchronizeBreakpoints(filePath, breakpointLines, isCurrent, sourceText); }
-        const log = runLogPath();
-        if (!log && options.trackRun && unlinkedLogWarningGeneration !== session.snapshot.generation) {
-            unlinkedLogWarningGeneration = session.snapshot.generation;
-            void kotUi.showWarningMessage(vscode.l10n.t('This Vanessa session has no linked execution log. For live step highlighting, select Execution log… in the Vanessa menu or start a managed session.'));
+                { modal: true }, ...(canApply ? [apply, current, configured] : [current, configured]));
+            return selected === apply ? 'apply' : selected === current ? 'current' : selected === configured ? 'configured' : 'cancelled';
+        },
+        applySettings: async (source, generation, isCurrent) => {
+            if (!settingsReport) {
+                settingsReport = new VanessaSettingsReport(context, session);
+                context.subscriptions.push(settingsReport);
+            }
+            const view = settingsReport;
+            const connected = () => !disposed && trusted() && session.snapshot.generation === generation;
+            const current = () => connected() && isCurrent();
+            try {
+                const { parameters, retained } = prepareVanessaRunSettings(source.parameters);
+                const report = (result: VanessaSettingsReply): VanessaSettingsReply => ({
+                    ...result, ignored: [...result.ignored, ...retained.map(key => ({
+                        key, message: vscode.l10n.t('The current session keeps its launch and execution-log settings.')
+                    }))]
+                });
+                const { list, preview } = await session.withSettingsControl(async settings => {
+                    const list = await settings.list();
+                    if (list.ok && !list.items) { throw new Error('Unconfirmed Vanessa settings response.'); }
+                    return { list, preview: list.ok && !list.errors.length
+                        ? await settings.apply(parameters, source.basePath, list.revision, true, true) : list };
+                }, current);
+                if (!await view.confirm(report(preview), list.items ?? [], connected, vscode.l10n.t('Apply settings and run test')) || !current()) {
+                    return { applied: false };
+                }
+                const result = await session.withSettingsControl(async settings => {
+                    const before = await settings.list();
+                    if (!before.ok || before.errors.length) { return { applied: before, changes: [] }; }
+                    if (!before.items || !current()) { throw new Error('The test artifact or Vanessa settings changed.'); }
+                    const applied = await settings.apply(parameters, source.basePath, preview.revision, false, true);
+                    if (!applied.changed.length) { return { applied, changes: [] }; }
+                    const after = await settings.list().catch(() => undefined);
+                    return { applied, changes: after?.ok && !after.errors.length && after.revision === applied.revision
+                        ? vanessaSettingsToRestore(before.items, after.items ?? [], applied.changed) : [] };
+                }, connected);
+                view.show(report(result.applied), list.items, 'result');
+                if (!result.applied.changed.length) { return { applied: result.applied.ok && !result.applied.errors.length }; }
+                const application = ++settingsApplication;
+                pausedRestore = undefined;
+                const latest = () => connected() && settingsApplication === application;
+                const total = new Set(result.applied.changed).size;
+                const offerRestore = () => {
+                    if (!latest()) { return; }
+                    const restore = vscode.l10n.t('Restore previous settings');
+                    const keep = vscode.l10n.t('Keep applied settings');
+                    if (!result.changes.length) {
+                        void kotUi.showWarningMessage(vscode.l10n.t('Vanessa changed settings that KOT could not capture for restoration. Review the settings report.'));
+                        return;
+                    }
+                    const message = result.changes.length === total
+                        ? vscode.l10n.t('Restore the Vanessa settings that were active before the test?')
+                        : vscode.l10n.t('KOT can restore {0} of {1} changed Vanessa settings.', result.changes.length, total);
+                    void Promise.resolve(kotUi.showInformationMessage(message, restore, keep)).then(async selected => {
+                        if (selected !== restore || !latest()) { return; }
+                        if (session.busy || session.snapshot.status !== 'ready' || session.snapshot.execution?.stopReason === 'breakpoint') {
+                            void kotUi.showWarningMessage(vscode.l10n.t('Vanessa must be idle to restore its settings.'));
+                            return;
+                        }
+                        const restored = await session.withSettingsControl(settings => restoreVanessaRunSettings(settings, result.changes), latest);
+                        if (restored === total) { void kotUi.showInformationMessage(vscode.l10n.t('Previous Vanessa settings restored.')); }
+                        else { void kotUi.showWarningMessage(vscode.l10n.t('Restored {0} of {1} changed Vanessa settings. Review the settings that remain in the session.', restored, total)); }
+                    }).catch(() => {
+                        void kotUi.showWarningMessage(vscode.l10n.t('Vanessa did not confirm the settings restoration. Review the active session settings.'));
+                    });
+                };
+                return { applied: result.applied.ok && !result.applied.errors.length, offerRestore: () => {
+                    if (session.snapshot.execution?.stopReason === 'breakpoint') { pausedRestore = offerRestore; }
+                    else { offerRestore(); }
+                } };
+            } catch {
+                view.unconfirmed();
+                void kotUi.showErrorMessage(vscode.l10n.t('The Vanessa settings operation was not confirmed. Refresh the connection and review the active settings.'));
+                return { applied: false };
+            }
+        },
+        run: async (filePath, sourceText, isCurrent, breakpointLines) => {
+            if (breakpointLines?.length) { await session.synchronizeBreakpoints(filePath, breakpointLines, isCurrent, sourceText); }
+            const log = runLogPath();
+            if (!log && options.trackRun && unlinkedLogWarningGeneration !== session.snapshot.generation) {
+                unlinkedLogWarningGeneration = session.snapshot.generation;
+                void kotUi.showWarningMessage(vscode.l10n.t('This Vanessa session has no linked execution log. For live step highlighting, select Execution log… in the Vanessa menu or start a managed session.'));
+            }
+            const finish = options.trackRun?.(filePath, log);
+            try {
+                await session.run('runFeature', filePath, 1, sourceText, isCurrent);
+                return session.snapshot.execution?.status === 'running' ? 'unknown' : session.snapshot.execution?.status ?? 'unknown';
+            } finally { await finish?.(session.snapshot.execution?.status === 'passed'); }
         }
-        const finish = options.trackRun?.(filePath, log);
-        try {
-            await session.run('runFeature', filePath, 1, sourceText, isCurrent);
-            return session.snapshot.execution?.status === 'running' ? 'unknown' : session.snapshot.execution?.status ?? 'unknown';
-        } finally { await finish?.(session.snapshot.execution?.status === 'passed'); }
-    } });
+    });
     const resume = async () => {
         const execution = session.snapshot.execution;
         if (!execution || execution.stopReason !== 'breakpoint' || execution.status !== 'stopped' || !execution.currentLineNumber) {
             throw new Error(vscode.l10n.t('Continue requires a confirmed breakpoint stop in this feature.'));
         }
         const source = await fs.readFile(execution.filePath, 'utf8'); const generation = session.snapshot.generation;
-        await session.run('resume', execution.filePath, execution.currentLineNumber, source, () => generation === session.snapshot.generation);
+        try { await session.run('resume', execution.filePath, execution.currentLineNumber, source, () => generation === session.snapshot.generation); }
+        finally {
+            if (session.snapshot.execution?.stopReason !== 'breakpoint') {
+                const offer = pausedRestore; pausedRestore = undefined; offer?.();
+            }
+        }
     };
     const chooseRunLog = async () => {
         if (session.busy || session.snapshot.status !== 'ready') { throw new Error(vscode.l10n.t('Vanessa is busy. Wait for the current command.')); }

@@ -13485,9 +13485,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     && fs.readFileSync(filePath, 'utf8') === sourceText && fs.readFileSync(settingsPath, 'utf8') === settingsText;
             } catch { return false; }
         };
-        const configurationKey = createHash('sha256').update(JSON.stringify([settingsPath, settingsText,
-            vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd()])).digest('hex');
+        const basePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+        const configurationKey = createHash('sha256').update(JSON.stringify([settingsPath, settingsText, basePath])).digest('hex');
         return this._vanessaManagedRunner({ filePath, sourceText, isCurrent, configurationKey,
+            settings: { parameters: settingsText.replace(/^\uFEFF/u, ''), basePath },
             launch: async port => await this.runScenarioInVanessaBuiltIn(scenarioName, targetKind, targetPath, artifact, { mcpPort: port }) === 'started' });
     }
 

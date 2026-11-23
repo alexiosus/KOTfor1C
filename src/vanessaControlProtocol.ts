@@ -2,7 +2,7 @@ export type VanessaControlCapability = 'state' | 'editor' | 'editorContent' | 'o
     | 'clientProfilesRead' | 'clientProfilesWrite' | 'clientConnect' | 'clientDisconnect' | 'clientClose'
     | 'variablesRead' | 'variablesWrite' | 'formTree' | 'formWindow' | 'formElement' | 'formWindows' | 'formActivateWindow' | 'recording' | 'formChecks' | 'formSuggestions'
     | 'environment' | 'runtimeSyntax' | 'runtimeSearch' | 'managerLog' | 'clientLog' | 'screenshotWindows' | 'screenshot'
-    | 'stateJson' | 'resultsJson' | 'runAsync' | 'elementSteps' | 'activeFormElement' | 'recordingResult' | 'clientProfilePort' | 'settingsRead' | 'settingsWrite' | 'mxlOpen';
+    | 'stateJson' | 'resultsJson' | 'runAsync' | 'elementSteps' | 'activeFormElement' | 'recordingResult' | 'clientProfilePort' | 'settingsRead' | 'settingsWrite' | 'settingsPreserveCi' | 'mxlOpen';
 export interface VanessaControlCapabilityStatus { readonly supported: boolean; readonly reason?: 'missingTool' | 'incompatibleSchema' }
 export type VanessaControlCapabilities = Readonly<Record<VanessaControlCapability, VanessaControlCapabilityStatus>>;
 export type VanessaControlReply =
@@ -84,6 +84,7 @@ export function assessVanessaControlCapabilities(tools: readonly unknown[]): Van
         clientProfilePort: { tool: 'manage_test_client_profiles', fields: { action: 'string', name: 'string', port: 'integer' }, literals: { action: ['add', 'edit', 'get_list'] } },
         settingsRead: { tool: 'get_va_settings', fields: { action: 'string', key: 'string', query: 'string', limit: 'integer', format: 'string' }, literals: { action: ['list', 'get'], format: ['json'] } },
         settingsWrite: { tool: 'manage_va_settings', fields: { action: 'string', key: 'string', value: 'string', parameters_json: 'string', base_path: 'string', dry_run: 'boolean', expected_revision: 'integer', expected_current_value: 'string', format: 'string' }, literals: { action: ['set', 'apply'], format: ['json'] } },
+        settingsPreserveCi: { tool: 'manage_va_settings', fields: { action: 'string', preserve_ci_flags: 'boolean' }, literals: { action: ['apply'], preserve_ci_flags: [true] } },
         editor: { tool: 'get_editor_state', fields: { includeContent: 'boolean' }, literals: { includeContent: [false] } },
         editorContent: { tool: 'get_editor_state', fields: { includeContent: 'boolean' }, literals: { includeContent: [true] } },
         openFeature: { tool: 'open_feature_file', fields: { filePath: 'string' } },

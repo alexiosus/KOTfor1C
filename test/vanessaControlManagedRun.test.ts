@@ -63,3 +63,25 @@ test('a reconnect or source edit while choosing current settings invalidates the
         assert.equal(runs, 0);
     }
 });
+
+test('temporary settings remain restorable if the artifact changes before execution or the run fails', async () => {
+    let current = true;
+    const events: string[] = [];
+    const runner = new VanessaManagedRun({
+        currentGeneration: () => 4, canApplySettings: () => true,
+        chooseSession: async canApply => { assert.ok(canApply); return 'apply'; },
+        applySettings: async () => {
+            events.push('apply');
+            if (events.length === 1) { current = false; }
+            return { applied: true, offerRestore: () => { events.push('offer restore'); } };
+        },
+        start: async () => { throw new Error('Unexpected configured launch'); },
+        run: async () => { events.push('run'); throw new Error('Test failed'); }
+    });
+    const request = { filePath: 'own.feature', sourceText: 'own source', configurationKey: 'settings-a', isCurrent: () => current,
+        settings: { parameters: '{}', basePath: '/own' }, launch: async () => false };
+    await assert.rejects(runner.run(request), /changed/u);
+    current = true;
+    await assert.rejects(runner.run(request), /failed/u);
+    assert.deepEqual(events, ['apply', 'offer restore', 'apply', 'run', 'offer restore']);
+});
