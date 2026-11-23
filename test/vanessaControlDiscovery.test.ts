@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { discoverVanessaControlEndpoints, parseLocalOneCListeningPorts, parseLocalOneCLaunchParameters } from '../src/vanessaControlDiscovery';
+import { discoverVanessaControlEndpoints, localOneCListener, parseLocalOneCListeners, parseLocalOneCLaunchParameters } from '../src/vanessaControlDiscovery';
 
 test('discovery inspects only bounded local known/1C ports and returns verified Vanessa endpoints', async () => {
     const inspected: string[] = [];
@@ -26,8 +26,16 @@ test('multiple live sessions remain separate; cancellation rejects late discover
     await assert.rejects(discoverVanessaControlEndpoints({ saved: [], ports: [], inspect: async () => { controller.abort(); return true; } }, controller.signal), { name: 'AbortError' });
 });
 
-test('listening port output contains numbers only and never treats process output as endpoints', () => {
-    assert.deepEqual(parseLocalOneCListeningPorts('9876\r\n 6000 \r\n9876\r\nPwd=secret\r\nhttp://example.org/mcp\r\n0\r\n65536\r\n'), [9876, 6000]);
+test('the listener identifies a local session by address and PID even when window titles match', () => {
+    const v4 = { host: '127.0.0.1', port: 9876, pid: 11, title: 'Vanessa Automation' };
+    const v6 = { ...v4, host: '::1', pid: 22 };
+    const listeners = parseLocalOneCListeners(JSON.stringify([v4, v6, { ...v4, port: 65536 }, { ...v4, host: 'example.org' }, { ...v4, pid: -3 }]));
+    assert.deepEqual(listeners, [v4, v6]);
+    assert.deepEqual(localOneCListener('http://127.0.0.1:9876/mcp', listeners), v4);
+    assert.deepEqual(localOneCListener('http://[::1]:9876/mcp', listeners), v6);
+    assert.equal(localOneCListener('http://localhost:9876/mcp', listeners), undefined);
+    assert.equal(localOneCListener('http://example.org:9876/mcp', listeners), undefined);
+    assert.deepEqual(parseLocalOneCListeners('unstructured process output'), []);
 });
 
 test('launch metadata accepts only a VAParams filename and a finite process creation time', () => {

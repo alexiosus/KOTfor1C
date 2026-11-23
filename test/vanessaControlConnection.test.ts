@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 import { assessVanessaControlCapabilities, normalizeVanessaControlEndpoint, sameVanessaFeaturePath } from '../src/vanessaControlProtocol';
-import { discoverVanessaControlEndpoints } from '../src/vanessaControlDiscovery';
+import { discoverVanessaControlEndpoints, localOneCListener } from '../src/vanessaControlDiscovery';
 import { VanessaManagedRun } from '../src/vanessaControlManagedRun';
 import * as runtimeSettings from '../src/vanessaControlSettings';
 
@@ -19,6 +19,7 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
     const contexts = new Map<string, unknown>();
     const tracked: Array<{ file: string; log?: string }> = [];
     const progressTitles: string[] = [];
+    const focused: string[] = []; const clipboard: string[] = [];
     const timers: Array<{ callback(): void; delay: number; active: boolean; unref(): void }> = [];
     const listeners: Array<(snapshot: unknown) => void> = [];
     const subscriptions: Array<{ dispose(): void }> = []; let launches = 0; let trusted = startupOptions.trusted !== false; let informationPrompts = 0;
@@ -45,7 +46,7 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
         snapshot: any = { generation: 0, status: 'detached' };
         onDidChange(listener: typeof listeners[number]) { listeners.push(listener); return noop(); }
         async attach(_transport: unknown, endpoint: string) {
-            attached.push(endpoint); this.snapshot = { generation: this.snapshot.generation + 1, status: 'ready', capabilities: assessVanessaControlCapabilities(tools) };
+            attached.push(endpoint); this.snapshot = { generation: this.snapshot.generation + 1, status: 'ready', endpoint, capabilities: assessVanessaControlCapabilities(tools) };
             for (const notify of listeners) { notify(this.snapshot); }
         }
         async detach() { this.snapshot = { generation: this.snapshot.generation + 1, status: 'detached' }; for (const notify of listeners) { notify(this.snapshot); } }
@@ -88,6 +89,7 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
             if (name === './kotInteraction') { return nativeInteraction; }
             if (name === 'vscode') { return { l10n: { t: (text: string, ...args: unknown[]) => text.replace(/\{(\d+)\}/gu, (_token, index) => String(args[Number(index)])) }, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 1 }, TabInputText: TextTabInput,
                 workspace: { get isTrusted() { return trusted; }, getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'autoAttach' ? autoAttach : key === 'autoStart' ? startupOptions.autoStart ?? false : fallback }) },
+                env: { clipboard: { writeText: async (value: string) => { clipboard.push(value); } } },
                 window: { createStatusBarItem: () => status,
                     tabGroups: { get all() { return openTabs.map(tabs => ({ tabs })); },
                         onDidChangeTabs: (listener: typeof tabsChanged) => { tabsChanged = listener; return noop(); } },
@@ -123,7 +125,12 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
                 unconfirmed() { runEvents.push('unconfirmed'); }
                 dispose() {}
             } }; }
-            if (name === './vanessaControlDiscovery') { return { discoverVanessaControlEndpoints, localOneCListeningPorts: () => resolvePorts() }; }
+            if (name === './vanessaControlDiscovery') {
+                return { discoverVanessaControlEndpoints, localOneCListener,
+                    localOneCListeners: async () => (await resolvePorts()).map(port => ({ host: '127.0.0.1', port, pid: port + 1, title: 'Vanessa Automation' })),
+                    canShowLocalVanessaWindow: (endpoint: string) => new URL(endpoint).hostname === '127.0.0.1',
+                    showLocalVanessaWindow: async (endpoint: string) => { focused.push(endpoint); return true; } };
+            }
             return require(name);
         } });
     const register = module.exports.registerVanessaControl as (...args: unknown[]) => { ensureConnected(): Promise<boolean>; ensureAgentConnected(): Promise<boolean>;
@@ -135,7 +142,7 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
         attachedRunLog: async () => startupOptions.recoveredLog, trackRun: (file: string, log?: string) => { tracked.push({ file, log }); return async () => {}; },
         launch: async () => { launches++; return true; }, canAutoStart: () => startupOptions.canAutoStart !== false });
     return { ...control, prompts, inspected, attached, errors, state, contexts, commands, status, tracked, progressTitles,
-        settingsCalls, runEvents, sessionChoices, restoreOffers,
+        settingsCalls, runEvents, sessionChoices, restoreOffers, focused, clipboard,
         chooseRestore: () => restoreOffers.at(-1)!.choose('Restore previous settings'),
         closeTab: (closed: string, remaining: string[][] = []) => {
             openTabs = remaining.map(group => group.map(tab));
@@ -383,7 +390,31 @@ test('startup does not choose between live sessions; an explicit action asks onc
     const live = ['http://127.0.0.1:6000/mcp', 'http://127.0.0.1:7000/mcp']; const h = harness(live);
     await h.startup(); assert.deepEqual(h.attached, []); assert.deepEqual(h.prompts, []);
     assert.equal(await h.ensureConnected(), true);
-    assert.deepEqual(h.attached, [live[1]]); assert.deepEqual(h.prompts.map(items => Array.from(items)), [live]);
+    assert.deepEqual(h.attached, [live[1]]);
+    const items = Array.from(h.prompts[0] as Array<{ endpoint: string; description: string; detail: string }>);
+    assert.deepEqual(items.map(item => [item.endpoint, item.description, item.detail]), [
+        [live[0], 'Process ID 6001', 'Vanessa Automation'], [live[1], 'Process ID 7001', 'Vanessa Automation']
+    ]);
+    assert.ok(h.status.tooltip.includes(live[1]));
+    await h.chooseMenuItem('Show Vanessa window');
+    await h.chooseMenuItem('Copy current MCP address');
+    assert.deepEqual(h.focused, [live[1]]);
+    assert.deepEqual(h.clipboard, [live[1]]);
+});
+
+test('the attach picker finds other live managers even when a session is already connected', async () => {
+    const live = ['http://127.0.0.1:6000/mcp'];
+    const h = harness(live);
+    try {
+        assert.equal(await h.ensureConnected(), true);
+        live.push('http://127.0.0.1:7000/mcp');
+        await h.commands.get('kotTestToolkit.vanessaControl.attach')!();
+        assert.deepEqual(h.attached, live);
+        const items = Array.from(h.prompts[0] as Array<{ endpoint: string; description?: string }>);
+        assert.deepEqual(items.slice(0, 2).map(item => [item.endpoint, item.description]), [
+            [live[0], 'Connected · Process ID 6001'], [live[1], 'Process ID 7001']
+        ]);
+    } finally { h.dispose(); }
 });
 
 test('agent connections report ambiguity without opening a picker and accept an explicit discovered manager', async () => {

@@ -8,6 +8,25 @@ const fixture = (name: string) => fs.readFileSync(path.join(process.cwd(), 'test
 const tools = () => JSON.parse(fixture('tools.json')).tools;
 const reply = (text: string) => ({ content: [{ type: 'text', text }] });
 
+test('English VA .47 replies retain source, execution results and breakpoint confirmation', () => {
+    const source = '# language: en\nFeature: Safe\nScenario: Safe\n    And Delay 1\n';
+    const file = 'C:\\safe.feature';
+    const editor = `# Editor state\n\n## Open tabs\nQuantity: 2\n\n- memory:welcome\n- **→** ${file}\n\n## Active document\n- Line: 4\n\n### Contents\n\`\`\`gherkin\n${source}\n\`\`\`\n\n## Errors in the editor\nQuantity: 0`;
+    assert.deepEqual(parseVanessaControlReply('get_editor_state', reply(editor)), {
+        kind: 'editor', featurePath: file, lineNumber: 4, dirty: false, content: source
+    });
+    assert.equal(parseVanessaControlReply('get_editor_state', reply(editor.replace('Quantity: 2', 'Quantity: 1'))).kind, 'unknown');
+    assert.deepEqual(parseVanessaControlReply('manage_breakpoints', reply('# Breakpoints\n\nТочек останова нет (по данным редактора).')),
+        { kind: 'breakpoints', lines: [] });
+    assert.deepEqual(parseVanessaControlReply('execute_feature_step', reply('Step in feature file line completed successfully')),
+        { kind: 'stepResult', status: 'passed' });
+    const run = '## Result of script execution: all scripts executed successfully\nИдентификатор прогона: 1f63eadc-71b6-4e47-a176-b0a00d0384af\n\nИмя сценария: First\nScenario execution result: Success';
+    assert.deepEqual(parseVanessaControlReply('run_scenario', reply(run)), { kind: 'runResult', status: 'passed', scenarioCount: 1 });
+    assert.equal(parseVanessaControlReply('run_scenario', reply(run.replace('result: Success', 'result: Failed'))).kind, 'unknown');
+    const state = '# Vanessa Automation Status\n\n- Execution of scripts: No\n- Клиент тестирования подключён: No\n- Включена запись действий пользователя: No\n\n## Текущая фича (по данным прогона)\n- fullPath: not specified\n\n## Текущий сценарий (по данным прогона)\n\n## Текущий шаг (по данным прогона)';
+    assert.deepEqual(parseVanessaControlReply('get_vanessa_automation_state', reply(state)), { kind: 'state', state: 'idle', recording: false });
+});
+
 test('completed long-run JSON above one megabyte is parsed locally while oversized replies remain bounded', () => {
     const text = JSON.stringify({ schemaVersion: '1.1', ok: true, isRunning: false, isComplete: true, status: 'success',
         steps: Array.from({ length: 6000 }, (_, index) => ({ lineNumber: index + 1, name: 'A'.repeat(160), status: 'success' })) });
