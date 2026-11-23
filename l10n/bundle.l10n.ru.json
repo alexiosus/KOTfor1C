@@ -2852,6 +2852,7 @@
   "Keep applied settings": "Оставить применённые настройки",
   "Vanessa changed settings that KOT could not capture for restoration. Review the settings report.": "Vanessa изменила настройки, прежние значения которых KOT не смог сохранить для восстановления. Проверьте отчёт.",
   "Restore the Vanessa settings that were active before the test?": "Восстановить настройки Vanessa, которые действовали до запуска теста?",
+  "The compiled feature was closed. Restore the previous Vanessa settings?": "Собранная фича закрыта. Восстановить прежние настройки Vanessa?",
   "KOT can restore {0} of {1} changed Vanessa settings.": "KOT может восстановить {0} из {1} изменённых настроек Vanessa.",
   "Vanessa must be idle to restore its settings.": "Для восстановления настроек дождитесь завершения работы Vanessa.",
   "Previous Vanessa settings restored.": "Прежние настройки Vanessa восстановлены.",

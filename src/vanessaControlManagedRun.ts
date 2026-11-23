@@ -18,7 +18,7 @@ export interface VanessaManagedRunPorts {
     currentGeneration?(): number | undefined;
     canApplySettings?(): boolean;
     chooseSession?(canApply: boolean): Promise<'current' | 'apply' | 'configured' | 'cancelled'>;
-    applySettings?(settings: VanessaManagedRunSettings, generation: number, isCurrent: () => boolean):
+    applySettings?(settings: VanessaManagedRunSettings, generation: number, isCurrent: () => boolean, filePath: string):
         Promise<{ applied: boolean; offerRestore?: () => void }>;
     start(launch: VanessaManagedRunRequest['launch']): Promise<boolean>;
     run(filePath: string, sourceText: string, isCurrent: () => boolean, breakpointLines?: readonly number[]): Promise<Exclude<VanessaManagedRunResult, 'cancelled'>>;
@@ -49,7 +49,7 @@ export class VanessaManagedRun {
                 if (choice === 'apply') {
                     if (!canApply || !request.settings || !this.ports.applySettings) { return 'cancelled'; }
                     this.accepted = undefined;
-                    const result = await this.ports.applySettings(request.settings, generation, request.isCurrent);
+                    const result = await this.ports.applySettings(request.settings, generation, request.isCurrent, request.filePath);
                     offerRestore = result.offerRestore;
                     if (!result.applied) { return 'cancelled'; }
                     if (this.ports.currentGeneration?.() !== generation) { throw new Error('The Vanessa connection changed. Run the test again.'); }

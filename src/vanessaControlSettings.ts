@@ -67,7 +67,7 @@ export function prepareVanessaRunSettings(parameters: string): { parameters: str
     return { parameters: JSON.stringify(parsed), retained };
 }
 
-interface VanessaSettingRestore {
+export interface VanessaSettingRestore {
     readonly path: string;
     readonly before: string;
     readonly after: string;

@@ -2852,6 +2852,7 @@
   "Keep applied settings": "Keep applied settings",
   "Vanessa changed settings that KOT could not capture for restoration. Review the settings report.": "Vanessa changed settings that KOT could not capture for restoration. Review the settings report.",
   "Restore the Vanessa settings that were active before the test?": "Restore the Vanessa settings that were active before the test?",
+  "The compiled feature was closed. Restore the previous Vanessa settings?": "The compiled feature was closed. Restore the previous Vanessa settings?",
   "KOT can restore {0} of {1} changed Vanessa settings.": "KOT can restore {0} of {1} changed Vanessa settings.",
   "Vanessa must be idle to restore its settings.": "Vanessa must be idle to restore its settings.",
   "Previous Vanessa settings restored.": "Previous Vanessa settings restored.",

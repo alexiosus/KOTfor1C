@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
-import { assessVanessaControlCapabilities, normalizeVanessaControlEndpoint } from '../src/vanessaControlProtocol';
+import { assessVanessaControlCapabilities, normalizeVanessaControlEndpoint, sameVanessaFeaturePath } from '../src/vanessaControlProtocol';
 import { discoverVanessaControlEndpoints } from '../src/vanessaControlDiscovery';
 import { VanessaManagedRun } from '../src/vanessaControlManagedRun';
 import * as runtimeSettings from '../src/vanessaControlSettings';
@@ -27,12 +27,21 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
     const sessionChoices: string[][] = [];
     const settingPath = 'RunningScripts.stoponerror';
     let settingValue = 'false'; let revision = 1;
-    let chooseRestore: (answer: string) => void = () => { throw new Error('Restore was not offered'); };
+    const restoreOffers: Array<{ message: string; choose(answer: string): void }> = [];
+    class TextTabInput {
+        readonly uri: { scheme: 'file'; fsPath: string };
+        constructor(fsPath: string) { this.uri = { scheme: 'file', fsPath }; }
+    }
+    const tab = (file: string) => ({ input: new TextTabInput(file) });
+    let openTabs: ReturnType<typeof tab>[][] = [];
+    let tabsChanged: (event: { closed: ReturnType<typeof tab>[] }) => void;
+    let menuChoice: string | undefined;
     const status: any = { show() {}, hide() {}, dispose() {} };
     let resolvePorts: () => Promise<readonly number[]> = async () => candidatePorts;
     let initial!: () => void;
     const noop = () => ({ dispose() {} });
     class Session {
+        busy = false;
         snapshot: any = { generation: 0, status: 'detached' };
         onDidChange(listener: typeof listeners[number]) { listeners.push(listener); return noop(); }
         async attach(_transport: unknown, endpoint: string) {
@@ -77,16 +86,21 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
         setInterval: () => ({ unref() {} }), clearInterval() {},
         require: (name: string) => {
             if (name === './kotInteraction') { return nativeInteraction; }
-            if (name === 'vscode') { return { l10n: { t: (text: string, ...args: unknown[]) => text.replace(/\{(\d+)\}/gu, (_token, index) => String(args[Number(index)])) }, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 1 },
+            if (name === 'vscode') { return { l10n: { t: (text: string, ...args: unknown[]) => text.replace(/\{(\d+)\}/gu, (_token, index) => String(args[Number(index)])) }, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 1 }, TabInputText: TextTabInput,
                 workspace: { get isTrusted() { return trusted; }, getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'autoAttach' ? autoAttach : key === 'autoStart' ? startupOptions.autoStart ?? false : fallback }) },
                 window: { createStatusBarItem: () => status,
-                    showQuickPick: async (items: unknown[]) => { prompts.push(items); return items[1]; },
+                    tabGroups: { get all() { return openTabs.map(tabs => ({ tabs })); },
+                        onDidChangeTabs: (listener: typeof tabsChanged) => { tabsChanged = listener; return noop(); } },
+                    showQuickPick: async (items: Array<{ label?: string }>) => {
+                        prompts.push(items);
+                        return menuChoice === undefined ? items[1] : items.find(item => item.label === menuChoice);
+                    },
                     showInputBox: async () => { throw new Error('Unexpected endpoint input'); }, showErrorMessage: (error: string) => errors.push(error),
-                    showInformationMessage: async (_message: string, options: unknown, ...actions: string[]) => {
+                    showInformationMessage: async (message: string, options: unknown, ...actions: string[]) => {
                         informationPrompts++;
                         if (options === 'Restore previous settings') {
                             runEvents.push('offer restore');
-                            return new Promise(resolve => { chooseRestore = resolve; });
+                            return new Promise(resolve => { restoreOffers.push({ message, choose: resolve }); });
                         }
                         if (typeof options === 'object') { sessionChoices.push(actions); }
                         if (startupOptions.useTestJson && actions.includes('Apply test JSON to this session…')) { return 'Apply test JSON to this session…'; }
@@ -98,7 +112,7 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
                     executeCommand: async (command: string, key: string, value: unknown) => { if (command === 'setContext') { contexts.set(key, value); } } } }; }
             if (name === './vanessaControlSession') { return { VanessaControlSession: Session }; }
             if (name === './vanessaControlTransport') { return { VanessaControlHttpTransport: Transport }; }
-            if (name === './vanessaControlProtocol') { return { assessVanessaControlCapabilities, normalizeVanessaControlEndpoint }; }
+            if (name === './vanessaControlProtocol') { return { assessVanessaControlCapabilities, normalizeVanessaControlEndpoint, sameVanessaFeaturePath }; }
             if (name === './vanessaControlReadiness') { return { awaitVanessaControlReady: async (attach: () => Promise<unknown>) => attach() }; }
             if (name === 'node:net') { return { createServer: () => ({ once() {}, listen(_port: number, _host: string, ready: () => void) { ready(); }, address: () => ({ port: 8888 }), close(done: () => void) { done(); } }) }; }
             if (name === './vanessaControlManagedRun') { return { VanessaManagedRun }; }
@@ -121,7 +135,16 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
         attachedRunLog: async () => startupOptions.recoveredLog, trackRun: (file: string, log?: string) => { tracked.push({ file, log }); return async () => {}; },
         launch: async () => { launches++; return true; }, canAutoStart: () => startupOptions.canAutoStart !== false });
     return { ...control, prompts, inspected, attached, errors, state, contexts, commands, status, tracked, progressTitles,
-        settingsCalls, runEvents, sessionChoices, chooseRestore: () => chooseRestore('Restore previous settings'),
+        settingsCalls, runEvents, sessionChoices, restoreOffers,
+        chooseRestore: () => restoreOffers.at(-1)!.choose('Restore previous settings'),
+        closeTab: (closed: string, remaining: string[][] = []) => {
+            openTabs = remaining.map(group => group.map(tab));
+            tabsChanged({ closed: [tab(closed)] });
+        },
+        chooseMenuItem: async (label: string) => {
+            menuChoice = label;
+            try { await commands.get('kotTestToolkit.vanessaControl')!(); } finally { menuChoice = undefined; }
+        },
         setting: () => settingValue,
         expireHealthCheck: () => { const timer = timers.find(timer => timer.active && timer.delay === 3_000); assert.ok(timer); timer.callback(); },
         notify: (snapshot: unknown) => { for (const listener of listeners) { listener(snapshot); } }, setPorts: (value: typeof resolvePorts) => { resolvePorts = value; },
@@ -150,6 +173,57 @@ test('a compiled test applies its JSON in .47 and can restore confirmed values a
             assert.equal(h.settingsCalls.some(call => call.action === 'set'), !editAfterRun);
         } finally { h.dispose(); }
     }
+});
+
+test('closing the last tab for the compiled feature reoffers restoration and the Vanessa menu can restore it', async () => {
+    const filePath = 'C:\\Own\\test.feature';
+    const restore = 'Restore previous settings';
+    const h = harness(['http://127.0.0.1:6000/mcp'], [6000], true, { useTestJson: true });
+    try {
+        await h.ensureConnected();
+        await h.chooseMenuItem(restore);
+        assert.equal((h.prompts.at(-1)! as Array<{ label: string }>).some(item => item.label === restore), false);
+        assert.equal(await h.runFeature({ filePath, sourceText: 'own', isCurrent: () => true,
+            settings: { parameters: '{"stoponerror":true}', basePath: 'C:/Own' }, launch: async () => false }), 'passed');
+        h.restoreOffers[0].choose('Keep applied settings');
+        h.closeTab('C:\\Own\\other.feature', [[filePath]]);
+        h.closeTab(filePath, [[filePath]]);
+        assert.equal(h.restoreOffers.length, 1);
+        h.closeTab('c:/own/test.feature');
+        assert.equal(h.restoreOffers.length, 2);
+        assert.match(h.restoreOffers[1].message, /compiled feature was closed/u);
+        await h.chooseMenuItem(restore);
+        assert.equal(h.setting(), 'false');
+        h.restoreOffers[1].choose(restore);
+        h.closeTab(filePath);
+        await h.chooseMenuItem(restore);
+        assert.equal(h.restoreOffers.length, 2);
+        assert.equal(h.settingsCalls.filter(call => call.action === 'set').length, 1);
+        assert.equal((h.prompts.at(-1)! as Array<{ label: string }>).some(item => item.label === restore), false);
+    } finally { h.dispose(); }
+});
+
+test('closing a feature during a run waits for completion, and reconnecting invalidates the reminder', async () => {
+    const filePath = 'C:\\Own\\test.feature';
+    const h = harness(['http://127.0.0.1:6000/mcp'], [6000], true, { useTestJson: true });
+    try {
+        await h.ensureConnected();
+        const run = h.session.run.bind(h.session);
+        h.session.run = async () => {
+            h.session.busy = true;
+            h.closeTab(filePath);
+            assert.equal(h.restoreOffers.length, 0);
+            await run();
+            h.session.busy = false;
+        };
+        assert.equal(await h.runFeature({ filePath, sourceText: 'own', isCurrent: () => true,
+            settings: { parameters: '{"stoponerror":true}', basePath: 'C:/Own' }, launch: async () => false }), 'passed');
+        assert.deepEqual(h.restoreOffers.map(offer => offer.message), ['The compiled feature was closed. Restore the previous Vanessa settings?']);
+        await h.session.attach({}, 'http://127.0.0.1:7000/mcp');
+        h.chooseRestore();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(h.settingsCalls.some(call => call.action === 'set'), false);
+    } finally { h.dispose(); }
 });
 
 test('cancelling the VAParams preview makes no runtime writes, and .45 only offers its existing choices', async () => {
