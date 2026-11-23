@@ -58,15 +58,16 @@ export function registerVanessaControlCommands(context: vscode.ExtensionContext,
             void vscode.commands.executeCommand('setContext', 'kotTestToolkit.vanessaControlCanStep', canStep);
         }
         const execution = snapshot.execution;
-        if (session.failure && session.failure !== reportedFailure) {
+        if (session.failure && session.failure !== reportedFailure && !execution?.external) {
             reportedFailure = session.failure;
             void kotUi.showErrorMessage(vscode.l10n.t('Step failed: {0}', session.failure.message));
         }
         for (const editor of vscode.window.visibleTextEditors) {
-            const matches = execution && session.executionMatchesSource(editor.document.uri.fsPath, textOf(editor.document));
+            const matches = execution && (!execution.external || !editor.document.isDirty) && session.executionMatchesSource(editor.document.uri.fsPath, textOf(editor.document));
             const line = execution ? (execution.currentLineNumber ?? execution.lineNumber) - 1 : -1;
             const lines = new Map(execution?.steps?.map(step => [step.lineNumber - 1, step.status]));
-            if (execution && (execution.status === 'running' || !lines.has(line))) { lines.set(line, execution.status); }
+            if (execution && (execution.external ? execution.status === 'running' && execution.currentLineNumber !== undefined && !lines.has(line)
+                : execution.status === 'running' || !lines.has(line))) { lines.set(line, execution.status); }
             const key = matches ? `${editor.document.version}:${JSON.stringify([...lines])}:${execution?.stopReason ?? ''}:${JSON.stringify(session.failure ?? '')}` : '';
             if (decorated.get(editor) === key) { continue; }
             decorated.set(editor, key);

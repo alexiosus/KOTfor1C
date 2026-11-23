@@ -2,7 +2,7 @@ export type VanessaControlCapability = 'state' | 'editor' | 'editorContent' | 'o
     | 'clientProfilesRead' | 'clientProfilesWrite' | 'clientConnect' | 'clientDisconnect' | 'clientClose'
     | 'variablesRead' | 'variablesWrite' | 'formTree' | 'formWindow' | 'formElement' | 'formWindows' | 'formActivateWindow' | 'recording' | 'formChecks' | 'formSuggestions'
     | 'environment' | 'runtimeSyntax' | 'runtimeSearch' | 'managerLog' | 'clientLog' | 'screenshotWindows' | 'screenshot'
-    | 'stateJson' | 'resultsJson' | 'elementSteps' | 'activeFormElement' | 'recordingResult' | 'clientProfilePort' | 'settingsRead' | 'settingsWrite' | 'mxlOpen';
+    | 'stateJson' | 'resultsJson' | 'runAsync' | 'elementSteps' | 'activeFormElement' | 'recordingResult' | 'clientProfilePort' | 'settingsRead' | 'settingsWrite' | 'mxlOpen';
 export interface VanessaControlCapabilityStatus { readonly supported: boolean; readonly reason?: 'missingTool' | 'incompatibleSchema' }
 export type VanessaControlCapabilities = Readonly<Record<VanessaControlCapability, VanessaControlCapabilityStatus>>;
 export type VanessaControlReply =
@@ -92,6 +92,7 @@ export function assessVanessaControlCapabilities(tools: readonly unknown[]): Van
         runFromLine: { tool: 'run_scenario', fields: { mode: 'string', filePath: 'string', lineNumber: 'integer' }, literals: { mode: ['reloadAndRunFromLine'] } },
         runFeature: { tool: 'run_scenario', fields: { mode: 'string', filePath: 'string' }, literals: { mode: ['reloadAndRun'] } },
         runAll: { tool: 'run_scenario', fields: { mode: 'string' }, literals: { mode: ['all'] } },
+        runAsync: { tool: 'run_scenario', fields: { mode: 'string', wait: 'boolean' }, literals: { mode: ['reloadAndRun'], wait: [false] } },
         runCurrent: { tool: 'run_scenario', fields: { mode: 'string' }, literals: { mode: ['fromCurrentStep'] } },
         oneStep: { tool: 'execute_feature_step', fields: { filePath: 'string', lineNumber: 'integer' } },
         mxlOpen: { tool: 'execute_step_from_text', fields: { stepText: 'string' } },

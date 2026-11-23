@@ -102,7 +102,7 @@ test('client capabilities distinguish read, write, connection and close schemas;
 test('the verified live .45 endpoint exposes the control tools and an idle state', () => {
     const live = assessVanessaControlCapabilities(JSON.parse(fixture('tools.live.json')).tools);
     assert.deepEqual(Object.entries(live).filter(([, capability]) => !capability.supported).map(([name]) => name).sort(),
-        ['stateJson', 'resultsJson', 'elementSteps', 'activeFormElement', 'recordingResult', 'clientProfilePort', 'settingsRead', 'settingsWrite', 'mxlOpen'].sort());
+        ['stateJson', 'resultsJson', 'runAsync', 'elementSteps', 'activeFormElement', 'recordingResult', 'clientProfilePort', 'settingsRead', 'settingsWrite', 'mxlOpen'].sort());
     assert.deepEqual(parseVanessaControlReply('get_vanessa_automation_state', reply(fixture('state-idle.live.ru.md'))),
         { kind: 'state', state: 'idle', recording: false });
 });

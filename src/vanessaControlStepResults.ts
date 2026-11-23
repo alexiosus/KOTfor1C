@@ -22,6 +22,7 @@ export function mapVanessaStepResults(reply: unknown, source: string, firstLine 
             const row = value as Record<string, unknown>; const line = row.lineNumber;
             if (typeof line !== 'number' || !Number.isSafeInteger(line) || line < firstLine || line > lines.length ||
                 typeof row.name !== 'string' || typeof row.status !== 'string' || !statuses[row.status] ||
+                typeof row.stepFile === 'string' && row.stepFile && !sameVanessaFeaturePath(filePath, row.stepFile) ||
                 normalize(row.name) !== normalize(lines[line - 1])) { continue; }
             const previous = byLine.get(line); const status = statuses[row.status];
             byLine.set(line, previous === 'failed' || status === 'failed' ? 'failed' : previous && previous !== status ? 'unknown' : status);
