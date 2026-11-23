@@ -34,7 +34,7 @@ import {
     resolveOneCDesignerExePath,
     resolveOneCPlatformForLaunch
 } from './oneCPlatform';
-import { getSharedStartupInfobasePaths } from './startupInfobase';
+import { ensureSharedStartupInfobaseReady, getSharedStartupInfobasePaths } from './startupInfobase';
 import { resolveSharedStartupPlatform } from './sharedStartupPlatform';
 import { formatProcessCommandForDisplay } from './processCommandDisplay';
 import { buildDestructiveInfobaseImportConfirmation } from './infobaseDestructiveConfirmation';
@@ -3078,7 +3078,9 @@ async function resolveManagedInfobaseLaunchPlatform(
 ): Promise<{ platform: ConfiguredOneCPlatform; persistSelection: boolean } | null> {
     if (isSharedStartupInfobase(infobasePath)) {
         const platform = await resolveSharedStartupPlatform(t);
-        return platform ? { platform, persistSelection: false } : null;
+        if (!platform) { return null; }
+        await ensureSharedStartupInfobaseReady(context, platform.clientExePath);
+        return { platform, persistSelection: false };
     }
     const configuredPlatforms = await ensureOneCPlatformsCatalogInitialized();
     const explicitClientPath = normalizePreferredPlatformClientExePath(options?.preferredOneCClientExePath || null);

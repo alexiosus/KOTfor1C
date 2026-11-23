@@ -47,7 +47,7 @@ export class VanessaControlHttpTransport implements VanessaControlTransport {
         const generation = this.generation;
         await closing;
         if (this.generation !== generation) { throw new VanessaControlTransportError('disconnected'); }
-        const client = new Client({ name: 'kot-test-toolkit', version: '3.1.0' }, {
+        const client = new Client({ name: 'kot-test-toolkit', version: '3.1.1' }, {
             versionNegotiation: { mode: 'legacy' }, listMaxPages: 64
         });
         const connection: Connection = { client, lifetime: new AbortController(), ready: false };

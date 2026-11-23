@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import type { ProjectDefinitionView } from './projectDefinition';
 import { getConfiguredScenarioLanguage } from './gherkinLanguage';
 import { VanessaYamlTrialControl, type VanessaYamlTrial, type VanessaYamlTrialPorts } from './vanessaControlYamlTrial';
-import { prepareVanessaSelection } from './vanessaControlSelection';
+import { isCompleteVanessaFeature, prepareVanessaSelection } from './vanessaControlSelection';
 import { nativeDocumentTextMatchesFileText } from './scenarioNativeDocumentSnapshot';
 import { sameVanessaFeaturePath, type VanessaControlFailure, type VanessaControlSession } from './vanessaControlSession';
 import type { VanessaFeatureDocument } from './vanessaControlFeature';
@@ -121,7 +121,7 @@ export function registerVanessaYamlTrialCommand(context: vscode.ExtensionContext
                 };
                 if (source.dirty && !await editor.document.save()) { throw new Error('Save the source before running the selection.'); }
                 if (!isCurrent() || !nativeDocumentTextMatchesFileText(source.text, await fs.readFile(source.filePath, 'utf8'))) { throw new Error('The selected source changed. Select the steps again.'); }
-                const definitions = await getDefinitions(editor.document.uri);
+                const definitions = isCompleteVanessaFeature(source) ? undefined : await getDefinitions(editor.document.uri);
                 if (!isCurrent()) { throw new Error('The selected source changed. Select the steps again.'); }
                 const trial = prepareVanessaSelection(source, start, end, definitions, getConfiguredScenarioLanguage());
                 const file = await ports.materialize(trial);

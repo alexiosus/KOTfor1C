@@ -823,6 +823,22 @@ false
 
 Допустимые значения: `"process"`, `"mcp"`.
 
+### Язык интерфейса Vanessa Automation
+
+`kotTestToolkit.runVanessa.interfaceLanguage`
+
+Язык интерфейса Vanessa Automation для новых сеансов встроенного запуска KOT. Значение `inherit` использует текущий язык пользователя служебной базы. Выбор языка сохраняет его в профиле этого пользователя.
+
+Тип: `"string"`. Область: `window`.
+
+Значение по умолчанию:
+
+```json
+"inherit"
+```
+
+Допустимые значения: `"inherit"`, `"ru"`, `"en"`.
+
 ### Как часто обновлять журнал выполнения
 
 `kotTestToolkit.runVanessa.liveLogRefreshSeconds`

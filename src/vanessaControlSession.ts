@@ -340,7 +340,7 @@ export class VanessaControlSession {
                 }
                 if (observed.kind === 'state') {
                     const text = result.content?.filter(item => item.type === 'text').map(item => 'text' in item ? item.text : '').join('\n').replace(/\r\n/gu, '\n') ?? '';
-                    const scenario = /\n## Текущий сценарий\n([\s\S]*?)(?=\n## |$)/u.exec(text)?.[1] ?? '';
+                    const scenario = /\n## (?:Текущий сценарий|Current scenario)\n([\s\S]*?)(?=\n## |$)/u.exec(text)?.[1] ?? '';
                     const names = [...scenario.matchAll(/^- name: (.+)$/gmu)];
                     const structured = readVanessaStructuredReply(result);
                     const runId = typeof structured?.runId === 'string' ? structured.runId : undefined;
@@ -877,7 +877,7 @@ export class VanessaControlSession {
             const structuredError = structured?.error as { message?: unknown } | undefined;
             const message = parsed.kind === 'failureResult' || parsed.kind === 'runtimeResult' && parsed.status !== 'passed'
                 ? typeof structuredError?.message === 'string' ? structuredError.message : /^- Ошибка: ([^\r\n]+)$/mu.exec(text)?.[1] : undefined;
-            const technical = parsed.kind === 'failureResult' ? /\n\n(Технические данные:\n[\s\S]*?)(?=\n## Шаги \()/u.exec(text)?.[1] : undefined;
+            const technical = parsed.kind === 'failureResult' ? /\n\n(Технические данные:\n[\s\S]*?)(?=\n## (?:Шаги|Steps) \()/u.exec(text)?.[1] : undefined;
             const scenarioName = technical ? /^        ИмяСценария: (.+)$/mu.exec(technical)?.[1].trim() : undefined;
             const failedSteps = parsed.kind === 'failureResult' || parsed.kind === 'runtimeResult' && parsed.status === 'failed'
                 ? [...text.matchAll(/^\d+\. ([^\n]+) → \*\*Failed\*\*/gmu)] : [];

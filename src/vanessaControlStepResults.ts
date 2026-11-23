@@ -32,10 +32,10 @@ export function mapVanessaStepResults(reply: unknown, source: string, firstLine 
     let text: string;
     try { text = vanessaFormReplyText(reply); } catch { return []; }
     if (!text.startsWith('# Результаты тестов\n')) { return []; }
-    const parts = text.split('\n## Шаги (');
+    const parts = text.split(/\n## (?:Шаги|Steps) \(/u);
     if (parts.length !== 2) { return []; }
     const count = /^([1-9]\d*)\)\n/u.exec(parts[1])?.[1];
-    const rows = [...parts[1].matchAll(/^([1-9]\d*)\. ([^\n]+) → \*\*(Success|Failed|Broken|Pending|Skipped)\*\*(?: \([^\n]* мс\))?$/gmu)];
+    const rows = [...parts[1].matchAll(/^([1-9]\d*)\. ([^\n]+) → \*\*(Success|Failed|Broken|Pending|Skipped)\*\*(?: \([^\n]* (?:мс|ms)\))?$/gmu)];
     if (!count || Number(count) !== rows.length || rows.length > 10_000 || rows.some((row, index) => Number(row[1]) !== index + 1)) { return []; }
     const headers = source.split(/\r\n|\n|\r/u).flatMap((line, index) => {
         const match = /^\s*(?:Scenario(?: Outline)?|Сценарий|Структура сценария):\s*(.+)$/iu.exec(line);

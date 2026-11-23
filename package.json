@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/alexiosus/KOTfor1C",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "engines": {
     "vscode": "^1.106.0"
   },
@@ -626,6 +626,18 @@
             ],
             "markdownDescription": "%config.runVanessa.executionMode.description%",
             "order": 4.1
+          },
+          "kotTestToolkit.runVanessa.interfaceLanguage": {
+            "type": "string",
+            "enum": ["inherit", "ru", "en"],
+            "default": "inherit",
+            "enumDescriptions": [
+              "%config.runVanessa.interfaceLanguage.inherit%",
+              "%config.runVanessa.interfaceLanguage.ru%",
+              "%config.runVanessa.interfaceLanguage.en%"
+            ],
+            "markdownDescription": "%config.runVanessa.interfaceLanguage.description%",
+            "order": 4.2
           },
           "kotTestToolkit.runVanessa.liveLogRefreshSeconds": {
             "type": "number",

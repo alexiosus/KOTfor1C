@@ -3,6 +3,16 @@
 &AtClient
 Procedure OnOpen(Cancel)
     Parts = StrSplit(StrReplace(LaunchParameter, "KOTMcpPreparation=", ""), "|", False);
+    If Parts.Count() = 3 And Parts[0] = "KOTSetLanguage" Then
+        Result = New Structure;
+        Try
+            Result.Insert("language", SetServiceUserLanguage(Parts[1]));
+        Except
+            Result.Insert("error", ErrorDescription());
+        EndTry;
+        FinishPreparation(Parts[2], Result);
+        Return;
+    EndIf;
     If Parts.Count() <> 2 Then
         Close();
         Return;
@@ -18,12 +28,36 @@ Procedure OnOpen(Cancel)
     Except
         Result.Insert("error", ErrorDescription());
     EndTry;
+    FinishPreparation(ResultPath, Result);
+EndProcedure
+
+&AtClient
+Procedure FinishPreparation(ResultPath, Result)
     Writer = New JSONWriter;
     Writer.OpenFile(ResultPath);
     WriteJSON(Writer, Result);
     Writer.Close();
     Exit(False);
 EndProcedure
+
+&AtServerNoContext
+Function SetServiceUserLanguage(LanguageCode)
+    User = InfoBaseUsers.CurrentUser();
+    If User.Name <> "KOTStartupService" Or (LanguageCode <> "ru" And LanguageCode <> "en") Then
+        Raise "Invalid KOT service user language request";
+    EndIf;
+    For Each Language In Metadata.Languages Do
+        If Language.LanguageCode = LanguageCode Then
+            If User.Language <> Language Then
+                User.Language = Language;
+                User.Write();
+            EndIf;
+            SavedUser = InfoBaseUsers.FindByName(User.Name);
+            Return SavedUser.Language.LanguageCode;
+        EndIf;
+    EndDo;
+    Raise "Language not found in the KOT service infobase";
+EndFunction
 
 &AtServerNoContext
 Function ConfigureOnServer(Configure)

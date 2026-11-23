@@ -72,6 +72,22 @@ test('.47 Markdown state accepts run headings and ё without changing feature pa
     assert.equal(parseVanessaControlReply('get_vanessa_automation_state', reply(text.replace('подключён:', 'подключен: нет\n- Клиент тестирования подключён:'))).kind, 'unknown');
 });
 
+test('.45 English Markdown state accepts English sections and mixed-language flags', () => {
+    const text = fixture('state-running.ru.md').replace('Состояние Vanessa Automation', 'Vanessa Automation Status')
+        .replace('Выполнение сценариев: да', 'Execution of scripts: Yes')
+        .replace('Клиент тестирования подключен: да', 'Клиент тестирования подключен: Yes')
+        .replace('Текущая фича', 'Current feature').replace('Текущий сценарий', 'Current scenario').replace('Текущий шаг', 'Current step');
+    assert.deepEqual(parseVanessaControlReply('get_vanessa_automation_state', reply(text)),
+        parseVanessaControlReply('get_vanessa_automation_state', reply(fixture('state-running.ru.md'))));
+    assert.equal(parseVanessaControlReply('get_vanessa_automation_state', reply(text + '\n## Текущий шаг')).kind, 'unknown');
+});
+
+test('.45 English breakpoint list accepts the empty list reported for the verified editor', () => {
+    const text = '# Breakpoints\n\nThere are no breakpoints.\n\nThe files are not open. Load the features (`load_features`) and open the scenario.';
+    assert.deepEqual(parseVanessaControlReply('manage_breakpoints', reply(text)), { kind: 'breakpoints', lines: [] });
+    assert.equal(parseVanessaControlReply('manage_breakpoints', reply(text + '\nQuantity: 1\n- 8')).kind, 'unknown');
+});
+
 test('a failed scenario can contain Markdown headings without hiding the authoritative idle state', () => {
     const text = fixture('state-unknown-step.live.ru.md').replace('- result: ', '- result: Failure\n## В окне есть сообщения пользователю:\n');
     assert.deepEqual(parseVanessaControlReply('get_vanessa_automation_state', reply(text)), {

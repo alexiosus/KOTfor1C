@@ -1,7 +1,7 @@
 export type SharedStartupInfobaseAction = Readonly<{
     action: 'create' | 'recreate' | 'reuse';
     authentication: 'stored' | 'none';
-    reason: 'missing' | 'forced' | 'current' | 'legacy' | 'templateChanged';
+    reason: 'missing' | 'forced' | 'extensionChanged' | 'current' | 'legacy' | 'templateChanged';
 }>;
 
 export function decideSharedStartupInfobaseAction(input: Readonly<{
@@ -10,12 +10,16 @@ export function decideSharedStartupInfobaseAction(input: Readonly<{
     platform: NodeJS.Platform;
     hasStoredAuthentication: boolean;
     templateDescriptorMatches: boolean;
+    extensionVersionChanged?: boolean;
 }>): SharedStartupInfobaseAction {
     if (!input.markerExists) {
         return Object.freeze({ action: 'create', authentication: 'none', reason: 'missing' });
     }
     if (input.forceRecreate) {
         return Object.freeze({ action: 'recreate', authentication: 'none', reason: 'forced' });
+    }
+    if (input.platform === 'win32' && input.extensionVersionChanged) {
+        return Object.freeze({ action: 'recreate', authentication: 'none', reason: 'extensionChanged' });
     }
 
     const authentication = input.platform === 'win32' && input.hasStoredAuthentication

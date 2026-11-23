@@ -6886,6 +6886,15 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         };
     }
 
+    private async prepareVanessaInterfaceLanguage(oneCPath: string, startupInfobase: EnsureSharedStartupInfobaseResult): Promise<void> {
+        const language = vscode.workspace.getConfiguration('kotTestToolkit').get<string>('runVanessa.interfaceLanguage');
+        if (language !== 'ru' && language !== 'en') { return; }
+        const { setSharedVanessaInterfaceLanguage } = await loadStartupInfobase();
+        await kotUi.withProgress({ location: vscode.ProgressLocation.Notification,
+            title: this.t('Set Vanessa interface language') },
+            () => setSharedVanessaInterfaceLanguage(this._context, oneCPath, startupInfobase, language));
+    }
+
     private async openVanessaStandaloneDebug(mcpPort?: number, background = false): Promise<boolean> {
         if (this._isBuildInProgress) {
             kotUi.showWarningMessage(this.t('Please wait for the current build to finish.'));
@@ -6991,6 +7000,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         let started = false;
         try {
+            await this.prepareVanessaInterfaceLanguage(oneCPath, startupInfobase);
             await this.execute1CProcessDetached(
                 oneCPath,
                 args,
@@ -12300,6 +12310,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         let manualDebugStarted = false;
         try {
+            await this.prepareVanessaInterfaceLanguage(oneCPath, startupInfobase);
             if (keepOpen) {
                 await this.execute1CProcessDetached(
                     oneCPath,

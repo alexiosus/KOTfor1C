@@ -200,11 +200,11 @@ export function parseVanessaControlReply(tool: string, value: unknown): VanessaC
         return { kind: 'runResult', status: 'passed', scenarioCount: [...text.matchAll(/^(?:Результат прохождения сценария|Scenario execution result): Success$/gmu)].length };
     }
     if (tool === 'get_test_results' && text.startsWith('# Результаты тестов\n')) {
-        const sections = text.split('\n## Шаги (');
+        const sections = text.split(/\n## (?:Шаги|Steps) \(/u);
         const header = sections[0].split('\n\nТехнические данные:\n');
         if (sections.length === 2 && header.length === 2 && /^- Статус: Failed$/mu.test(header[0])) {
             const count = /^([1-9]\d*)\)\n/u.exec(sections[1])?.[1];
-            const steps = [...sections[1].matchAll(/^([1-9]\d*)\. [^\n]+ → \*\*(Success|Failed|Broken|Pending|Skipped)\*\*(?: \(\d+ мс\))?$/gmu)];
+            const steps = [...sections[1].matchAll(/^([1-9]\d*)\. [^\n]+ → \*\*(Success|Failed|Broken|Pending|Skipped)\*\*(?: \(\d+ (?:мс|ms)\))?$/gmu)];
             const paths = [...header[1].matchAll(/^        ПолныйПутьКФиче: ([^\n]+\.feature)$/gmu)];
             const lines = [...header[1].matchAll(/^        НомерСтрокиФичи: ([1-9]\d*)$/gmu)];
             if (count && steps.length === Number(count) && steps.every((step, index) => Number(step[1]) === index + 1) &&
@@ -212,10 +212,9 @@ export function parseVanessaControlReply(tool: string, value: unknown): VanessaC
                 return { kind: 'failureResult', featurePath: paths[0][1], lineNumber: Number(lines[0][1]) };
             }
         }
-        const parts = text.split('\n## Шаги (');
-        const status = /^- Статус: (Success|Failed|Broken|Pending)$/mu.exec(parts[0])?.[1];
-        const count = parts.length === 2 ? /^([1-9]\d*)\)\n/u.exec(parts[1])?.[1] : undefined;
-        const rows = parts.length === 2 ? [...parts[1].matchAll(/^([1-9]\d*)\. [^\n]+ → \*\*(Success|Failed|Broken|Pending|Skipped)\*\*(?: \([^\n]* мс\))?$/gmu)] : [];
+        const status = /^- Статус: (Success|Failed|Broken|Pending)$/mu.exec(sections[0])?.[1];
+        const count = sections.length === 2 ? /^([1-9]\d*)\)\n/u.exec(sections[1])?.[1] : undefined;
+        const rows = sections.length === 2 ? [...sections[1].matchAll(/^([1-9]\d*)\. [^\n]+ → \*\*(Success|Failed|Broken|Pending|Skipped)\*\*(?: \([^\n]* (?:мс|ms)\))?$/gmu)] : [];
         if (!text.includes('Технические данные:') && count && status && rows.length === Number(count) && rows.every((row, index) => Number(row[1]) === index + 1)) {
             const errors = [...text.matchAll(/^- Ошибка: ([^\n]+)$/gmu)];
             if (status === 'Success' && rows.every(row => row[2] === 'Success')) { return { kind: 'runtimeResult', status: 'passed' }; }
@@ -237,8 +236,10 @@ export function parseVanessaControlReply(tool: string, value: unknown): VanessaC
         const recording = [...initial.matchAll(/^- Включена запись действий пользователя: (да|нет|Yes|No)$/gmu)];
         // .45 writes the scenario result verbatim, including Markdown headings from
         // its error/window details. Only the outer state section names are structural.
-        const stateText = text.replace(/^## (Текущая фича|Текущий сценарий|Текущий шаг) \(по данным прогона\)$/gmu, '## $1');
-        const sections = ['Текущая фича', 'Текущий сценарий', 'Текущий шаг'];
+        const sectionNames = { feature: 'Текущая фича', scenario: 'Текущий сценарий', step: 'Текущий шаг' };
+        const sections = Object.values(sectionNames);
+        const stateText = text.replace(/^## (Текущая фича|Текущий сценарий|Текущий шаг) \(по данным прогона\)$/gmu, '## $1')
+            .replace(/^## Current (feature|scenario|step)$/gmu, (_match, section: keyof typeof sectionNames) => `## ${sectionNames[section]}`);
         const headings = [...stateText.matchAll(/^## (.+)$/gmu)].map(match => match[1]).filter(heading => sections.includes(heading));
         if (flags.length !== 1 || client.length !== 1 ||
             sections.some((heading, index) => headings.indexOf(heading) !== index || headings.lastIndexOf(heading) !== index)) {
@@ -265,7 +266,7 @@ export function parseVanessaControlReply(tool: string, value: unknown): VanessaC
         // .45 emits this hint even with open Monaco tabs; set/list/remove was verified live.
         // The caller must still verify the active saved file before and after every read.
         if (paragraphs[1] === 'Нет данных из редактора (обновятся при следующем обращении к редактору).') { return { kind: 'breakpointsUnavailable' }; }
-        if (['Точек останова нет.', 'Точек останова нет (по данным редактора).'].includes(paragraphs[1])) {
+        if (['Точек останова нет.', 'Точек останова нет (по данным редактора).', 'There are no breakpoints.'].includes(paragraphs[1])) {
             const advisory = paragraphs.slice(2).join('\n\n');
             if (/^(?:Количество|Quantity):|^- \d+$/mu.test(advisory)) { return { kind: 'unknown' }; }
             if (hints.some(hint => paragraphs.includes(hint))) { return { kind: 'breakpointsUnavailable' }; }

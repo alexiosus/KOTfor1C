@@ -702,6 +702,31 @@ window.KOT_SETTINGS_MODEL = {
       ]
     },
     {
+      "key": "kotTestToolkit.runVanessa.interfaceLanguage",
+      "label": "Язык интерфейса Vanessa Automation",
+      "section": "vanessa",
+      "advanced": false,
+      "type": "string",
+      "default": "inherit",
+      "description": "Язык интерфейса Vanessa Automation для новых сеансов встроенного запуска KOT. Значение `inherit` использует текущий язык пользователя служебной базы. Выбор языка сохраняет его в профиле этого пользователя.",
+      "preferredScope": "user",
+      "enum": [
+        "inherit",
+        "ru",
+        "en"
+      ],
+      "optionLabels": [
+        "Из профиля служебного пользователя",
+        "Русский",
+        "Английский"
+      ],
+      "optionLabelsEn": [
+        "From the service user profile",
+        "Russian",
+        "English"
+      ]
+    },
+    {
       "key": "kotTestToolkit.runVanessa.liveLogRefreshSeconds",
       "label": "Как часто обновлять журнал выполнения",
       "section": "vanessa",
