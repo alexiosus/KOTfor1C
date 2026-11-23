@@ -6,12 +6,17 @@ import vm from 'node:vm';
 import { assessVanessaControlCapabilities, normalizeVanessaControlEndpoint, sameVanessaFeaturePath } from '../src/vanessaControlProtocol';
 import { discoverVanessaControlEndpoints, localOneCListener } from '../src/vanessaControlDiscovery';
 import { VanessaManagedRun } from '../src/vanessaControlManagedRun';
+import { VanessaControlSession } from '../src/vanessaControlSession';
+import * as controlLease from '../src/vanessaControlLease';
 import * as runtimeSettings from '../src/vanessaControlSettings';
 
 function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAttach = true,
     startupOptions: { autoStart?: boolean; canAutoStart?: boolean; trusted?: boolean; recoveredLog?: string; useCurrent?: boolean;
-        useTestJson?: boolean; confirmSettings?: boolean; editAfterRun?: boolean } = {}) {
-    const tools = startupOptions.useTestJson ? JSON.parse(fs.readFileSync('test/fixtures/vanessa-control/1.2.043.47/tools.live.json', 'utf8')).tools
+        useTestJson?: boolean; confirmSettings?: boolean; editAfterRun?: boolean;
+        legacyRun?: { file: string; text: string; readClients(): Promise<void>; calls: Array<{ name: string; args: Record<string, unknown> }> } } = {}) {
+    const legacy = startupOptions.legacyRun;
+    const liveVersion = legacy ? '1.2.043.45' : startupOptions.useTestJson ? '1.2.043.47' : undefined;
+    const tools = liveVersion ? JSON.parse(fs.readFileSync(`test/fixtures/vanessa-control/${liveVersion}/tools.live.json`, 'utf8')).tools
         : [{ name: 'get_vanessa_automation_state', inputSchema: { type: 'object', properties: {} } },
         { name: 'get_editor_state', inputSchema: { type: 'object', properties: { includeContent: { type: 'boolean' } } } }];
     const commands = new Map<string, () => Promise<unknown>>(); const inspected: string[] = []; const attached: string[] = [];
@@ -73,9 +78,32 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
     }
     class Transport {
         endpoint = '';
-        async initialize(endpoint: string) { inspected.push(endpoint); this.endpoint = endpoint; if (!live.includes(endpoint)) { throw new Error('closed'); } }
+        private opened = false;
+        async initialize(endpoint: string) {
+            inspected.push(endpoint); this.endpoint = endpoint;
+            if (!live.includes(endpoint)) { throw new Error('closed'); }
+            return legacy ? { name: 'Vanessa Automation', version: '1.2.043.45' } : undefined;
+        }
         async listTools() { return tools; }
         async dispose() {}
+        async callTool(name: string, args: Record<string, unknown>) {
+            assert.ok(legacy);
+            legacy.calls.push({ name, args });
+            const reply = (text: string) => ({ content: [{ type: 'text', text }] });
+            if (name === 'get_vanessa_automation_state') {
+                return reply(fs.readFileSync('test/fixtures/vanessa-control/1.2.043.45/state-running.ru.md', 'utf8').replace('Выполнение сценариев: да', 'Выполнение сценариев: нет'));
+            }
+            if (name === 'manage_test_client_profiles') {
+                await legacy.readClients();
+                return reply("# Список профилей клиентов тестирования\n\nПрофили не настроены. Добавьте профиль на вкладке 'Клиенты тестирования' в настройках VA.");
+            }
+            if (name === 'open_feature_file') { this.opened = true; }
+            if (name === 'get_editor_state' && this.opened) {
+                return reply(`# Состояние редактора\n\n## Открытые вкладки\nКоличество: 1\n\n- **→** ${legacy.file}\n\n## Активный документ\n- Строка: 1\n\n### Содержимое\n\`\`\`gherkin\n${legacy.text}\n\`\`\``);
+            }
+            if (name === 'run_scenario') { return reply(fs.readFileSync('test/fixtures/vanessa-control/1.2.043.45/run-passed.live.ru.md', 'utf8')); }
+            return reply('');
+        }
     }
     const module = { exports: {} as Record<string, unknown> };
     const ts = require('typescript') as typeof import('typescript');
@@ -112,10 +140,11 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
                     withProgress: async (options: { title: string }, work: (progress: unknown, token: unknown) => Promise<unknown>) => { progressTitles.push(options.title); return work({}, { onCancellationRequested: noop, isCancellationRequested: false }); } },
                 commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return noop(); },
                     executeCommand: async (command: string, key: string, value: unknown) => { if (command === 'setContext') { contexts.set(key, value); } } } }; }
-            if (name === './vanessaControlSession') { return { VanessaControlSession: Session }; }
+            if (name === './vanessaControlSession') { return { VanessaControlSession: legacy ? VanessaControlSession : Session }; }
             if (name === './vanessaControlTransport') { return { VanessaControlHttpTransport: Transport }; }
             if (name === './vanessaControlProtocol') { return { assessVanessaControlCapabilities, normalizeVanessaControlEndpoint, sameVanessaFeaturePath }; }
             if (name === './vanessaControlReadiness') { return { awaitVanessaControlReady: async (attach: () => Promise<unknown>) => attach() }; }
+            if (name === './vanessaControlLease') { return controlLease; }
             if (name === 'node:net') { return { createServer: () => ({ once() {}, listen(_port: number, _host: string, ready: () => void) { ready(); }, address: () => ({ port: 8888 }), close(done: () => void) { done(); } }) }; }
             if (name === './vanessaControlManagedRun') { return { VanessaManagedRun }; }
             if (name === './vanessaControlSettings') { return runtimeSettings; }
@@ -159,6 +188,39 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
         dispose: () => { for (const disposable of subscriptions) { disposable.dispose(); } },
         startup: async () => { initial(); for (let n = 0; n < 20; n++) { await new Promise<void>(resolve => setImmediate(resolve)); } } };
 }
+
+test('a cold .45 compiled run waits for the client refresh before loading and starts the feature once', async () => {
+    const file = 'C:\\Own\\test.feature';
+    const text = 'Функционал: Фича\nСценарий: Проба\n    И Пауза 0';
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    let reading!: () => void; let release!: () => void;
+    const started = new Promise<void>(resolve => { reading = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const h = harness(['http://127.0.0.1:8888/mcp'], [], false, { legacyRun: { file, text, calls,
+        readClients: () => { reading(); return gate; } } });
+    const session = h.session as unknown as VanessaControlSession;
+    let refresh: Promise<unknown> | undefined;
+    const subscription = session.onDidChange(snapshot => {
+        if (snapshot.status === 'ready') {
+            subscription.dispose();
+            refresh = session.withTestClientControl(clients => clients.list());
+        }
+    });
+    try {
+        const run = h.runFeature({ filePath: file, sourceText: text, isCurrent: () => true, configurationKey: 'compiled',
+            launch: async port => { assert.equal(port, 8888); return true; } }).then(result => ({ result }), error => ({ error: String(error) }));
+        await Promise.race([started, run.then(result => assert.fail(JSON.stringify(result)))]);
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(calls.some(call => call.name === 'open_feature_file'), false);
+        release();
+        assert.deepEqual(await run, { result: 'passed' });
+        assert.deepEqual(calls.filter(call => ['load_features', 'open_feature_file', 'run_scenario'].includes(call.name)), [
+            { name: 'load_features', args: { path: file } },
+            { name: 'open_feature_file', args: { filePath: file } },
+            { name: 'run_scenario', args: { mode: 'all' } }
+        ]);
+    } finally { release(); await refresh; subscription.dispose(); h.dispose(); }
+});
 
 test('a compiled test applies its JSON in .47 and can restore confirmed values after the run', async () => {
     for (const editAfterRun of [false, true]) {

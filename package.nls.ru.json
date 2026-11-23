@@ -245,6 +245,7 @@
   "cmd.vanessaControl.detach.title": "Отключиться от Vanessa",
   "cmd.vanessaControl.oneStep.title": "Vanessa: Выполнить один шаг",
   "cmd.vanessaControl.runFromLine.title": "Vanessa: Запустить с этого шага",
+  "cmd.vanessaControl.runScenario.title": "Vanessa: Выполнить сценарий с начала",
   "cmd.vanessaControl.toggleBreakpoint.title": "Переключить точку останова KOT",
   "cmd.vanessaControl.listBreakpoints.title": "Точки останова Vanessa",
   "cmd.vanessaControl.tryYamlStep.title": "Vanessa: Попробовать шаг YAML без сборки",

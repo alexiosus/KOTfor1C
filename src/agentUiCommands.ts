@@ -23,7 +23,7 @@ export const agentUiCommands: readonly AgentUiCommand[] = [
         'vanessaControl.attach', 'vanessaControl.connect', 'vanessaControl.clients', 'vanessaControl.legacyClients', 'vanessaControl.settings', 'vanessaControl.formTools',
         'generateFormExplorerExtension', 'buildFormExplorerExtensionCfe', 'installFormExplorerExtension', 'startFormExplorerInfobase'].map(command => ({ command, mutates: true, execution: true })),
     { command: 'refreshCombinedRunJsonArtifacts', mutates: true },
-    ...['openScenarioInVanessaManual', 'vanessaControl.oneStep', 'vanessaControl.runFromLine'].map(command => ({ command, editor: true, mutates: true, execution: true })),
+    ...['openScenarioInVanessaManual', 'vanessaControl.oneStep', 'vanessaControl.runFromLine', 'vanessaControl.runScenario'].map(command => ({ command, editor: true, mutates: true, execution: true })),
     { command: 'vanessaControl.variables.set', mutates: true, execution: true },
     { command: 'vanessaControl.recording.copy' },
     { command: 'openFile', editor: true, execution: true },

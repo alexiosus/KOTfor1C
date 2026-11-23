@@ -7,19 +7,21 @@ import vm from 'node:vm';
 import os from 'node:os';
 import * as feature from '../src/vanessaControlFeature';
 import * as yaml from '../src/vanessaControlYaml';
+import * as lease from '../src/vanessaControlLease';
 
 for (const name of ['own.feature', 'scen.feature']) {
 test(`${name} control keeps the visible native source when Properties has focus and honors an explicit context-menu URI`, async t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-feature-context-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-    const file = path.join(root, name); const text = 'Feature: Own\nScenario: Own\n    And Delay 1\n';
+    const file = path.join(root, name); const text = 'Feature: Own\nScenario: Own\n    And Delay 1\nScenario: Other\n    And Delay 2\n';
     fs.writeFileSync(file, text);
     const uri = { scheme: 'file', toString: () => new URL(`file://${file}`).toString(), fsPath: file };
-    const editor = { document: { uri, version: 1, isDirty: false, lineCount: 4, getText: () => text }, selection: { active: { line: 2 } } };
+    const editor = { document: { uri, version: 1, isDirty: false, lineCount: 6, getText: () => text }, selection: { active: { line: 2 } } };
     const other = { ...editor, document: { ...editor.document, uri: { scheme: 'file', toString: () => 'file:///other.yaml', fsPath: '/other.yaml' } } };
     const handlers = new Map<string, (...args: unknown[]) => Promise<void>>(); const calls: unknown[][] = []; const errors: string[] = [];
     const noop = () => ({ dispose() {} });
     const vscode = { l10n: { t: (value: string) => value }, ProgressLocation: { Notification: 1 },
+        Selection: class { active: { line: number }; constructor(line: number) { this.active = { line }; } },
         window: { activeTextEditor: editor as typeof editor | undefined, visibleTextEditors: [editor, other],
             onDidChangeActiveTextEditor: noop, onDidChangeTextEditorSelection: noop, onDidChangeVisibleTextEditors: noop,
             showErrorMessage: (value: string) => { errors.push(value); }, showInformationMessage: noop,
@@ -30,8 +32,10 @@ test(`${name} control keeps the visible native source when Properties has focus 
     const module = { exports: {} as any }; const ts = require('typescript');
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/vanessaControlCommands.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText,
         { module, exports: module.exports, Error, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === 'vscode' ? vscode : name.endsWith('Highlighting')
-            ? { VanessaExecutionHighlighter: class { render() {} } } : name.endsWith('Feature') ? feature : name.endsWith('Yaml') ? yaml : require(name)) });
-    const session = { snapshot: { status: 'ready', capabilities: { oneStep: { supported: true }, editorContent: { supported: true }, openFeature: { supported: true } } },
+            ? { VanessaExecutionHighlighter: class { render() {} } } : name.endsWith('Feature') ? feature : name.endsWith('Yaml') ? yaml
+                : name.endsWith('Lease') ? lease : require(name)) });
+    const session = { snapshot: { status: 'ready', capabilities: { oneStep: { supported: true }, editorContent: { supported: true }, openFeature: { supported: true },
+        breakpoints: { supported: false } } },
         onDidChange: noop, run: async (...args: unknown[]) => { calls.push(args.slice(0, 3)); } };
     module.exports.registerVanessaControlCommands({ subscriptions: [], workspaceState: { get: () => true } }, session);
     vscode.window.activeTextEditor = undefined;
@@ -40,6 +44,17 @@ test(`${name} control keeps the visible native source when Properties has focus 
     vscode.window.activeTextEditor = other;
     await handlers.get('kotTestToolkit.vanessaControl.oneStep')!(uri);
     assert.deepEqual(errors, []); assert.deepEqual(calls, [['oneStep', file, 3], ['oneStep', file, 3]]);
+    editor.selection.active.line = 1;
+    const runScenario = handlers.get('kotTestToolkit.vanessaControl.runScenario')!;
+    await runScenario();
+    assert.deepEqual(errors, []); assert.deepEqual(calls.at(-1), ['runScenario', file, 3]);
+    await runScenario(uri, { line: 3, version: editor.document.version });
+    assert.deepEqual(errors, []); assert.deepEqual(calls.at(-1), ['runScenario', file, 5]);
+    assert.equal(calls.length, 4);
+    editor.document.version++;
+    await runScenario(uri, { line: 1, version: editor.document.version - 1 });
+    assert.match(errors[0], /feature changed/u);
+    assert.equal(calls.length, 4);
 });
 }
 
@@ -67,6 +82,7 @@ test(`${native ? 'native SPPR feature' : 'YAML'} F11 uses a direct step trial ev
         if (name === 'vscode') { return vscode; }
         if (name === './vanessaControlFeature') { return feature; }
         if (name === './vanessaControlYaml') { return yaml; }
+        if (name === './vanessaControlLease') { return lease; }
         if (name === './vanessaControlHighlighting') { return { VanessaExecutionHighlighter: class { render() {} } }; }
         return require(name);
     } });
@@ -100,7 +116,7 @@ test('a late failed-step error updates its hover without repainting unrelated fa
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/vanessaControlCommands.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
         { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === 'vscode' ? vscode : name.endsWith('Highlighting')
             ? { VanessaExecutionHighlighter: class { render() {} renderMany(_editor: unknown, lines: any[]) { painted.push(lines); } } }
-            : name.endsWith('Feature') ? feature : yaml) });
+            : name.endsWith('Feature') ? feature : name.endsWith('Lease') ? lease : yaml) });
     module.exports.registerVanessaControlCommands({ subscriptions: [] }, session, undefined, undefined, undefined,
         (failure: any) => ({ value: 'Rich failure: ' + failure.message + (failure.details ?? '') }));
     assert.equal(painted.length, 1);

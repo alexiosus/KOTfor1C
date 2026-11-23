@@ -261,6 +261,34 @@ test('runFromLine refuses a different or dirty Vanessa tab selected during prepa
         await session.detach();
     }
 });
+test('run scenario selects an accepted step in the same saved scenario and uses the selected MCP mode', async () => {
+    const file = 'C:\\own.feature';
+    const source = '# language: en\nFeature: Own\nScenario: Own\n    And Call an export\n    And Delay 0\n';
+    let cursor = 1;
+    const calls: unknown[] = [];
+    const session = new VanessaControlSession();
+    const wire = fake(async (name, args) => {
+        if (['load_features', 'open_feature_file', 'select_step', 'run_scenario'].includes(name)) { calls.push([name, args]); }
+        if (name === 'get_editor_state') {
+            return { content: [{ type: 'text', text: `# Состояние редактора\n\n## Открытые вкладки\nКоличество: 1\n\n- **→** ${file}\n\n## Активный документ\n- Строка: ${cursor}\n\n### Содержимое\n\`\`\`gherkin\n${source}\n\`\`\`` }] };
+        }
+        if (name === 'select_step') {
+            if (args.lineNumber === 4) { return { isError: true, content: [{ type: 'text', text: 'ACTION_FAILED: В строке №4 нет шага, который можно выполнить. В этой строке обнаружен тип строки: ШагСценарий' }] }; }
+            cursor = Number(args.lineNumber);
+        }
+        if (name === 'run_scenario') { return capturedReply('run-passed.live.ru.md'); }
+        return state();
+    });
+    await session.attach(wire, 'http://localhost:9876');
+    await session.run('runScenario', file, 4, source, undefined, [4, 5]);
+    assert.equal(session.snapshot.execution?.status, 'passed');
+    assert.deepEqual(calls, [
+        ['load_features', { path: file }], ['open_feature_file', { filePath: file }],
+        ['select_step', { lineNumber: 4 }], ['select_step', { lineNumber: 5 }], ['run_scenario', { mode: 'selected' }]
+    ]);
+    await session.detach();
+});
+
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
 function fake(call?: VanessaControlTransport['callTool']): VanessaControlTransport & { calls: string[]; closes: number } {
     const instance = { calls: [] as string[], closes: 0, initialize: async () => ({ name: 'Vanessa', version: 'test' }),

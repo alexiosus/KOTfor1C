@@ -16,6 +16,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { buildVanessaMxlStep, readMxlOpeningResult } from './mxlOpening';
 import { mapVanessaStepResults, type VanessaExecutionLine, type VanessaResultSourceMap } from './vanessaControlStepResults';
+import { VanessaControlBusyError } from './vanessaControlLease';
 
 export interface VanessaControlExecution {
     readonly filePath: string;
@@ -24,7 +25,7 @@ export interface VanessaControlExecution {
     /** Next editor selection reported by Vanessa, not an inferred executor position. */
     readonly nextLineNumber?: number;
     readonly stopReason?: 'breakpoint';
-    readonly mode: 'oneStep' | 'runFromLine' | 'runFeature' | 'resume';
+    readonly mode: 'oneStep' | 'runFromLine' | 'runFeature' | 'runScenario' | 'resume';
     readonly status: 'running' | 'passed' | 'failed' | 'stopped' | 'unknown';
     readonly external?: true;
     readonly progress?: VanessaControlProgress;
@@ -483,7 +484,8 @@ export class VanessaControlSession {
         });
     }
 
-    async run(mode: VanessaControlExecution['mode'], filePath: string, lineNumber: number, sourceText?: string, isCurrent?: () => boolean): Promise<void> {
+    async run(mode: VanessaControlExecution['mode'], filePath: string, lineNumber: number, sourceText?: string, isCurrent?: () => boolean,
+        scenarioLines: readonly number[] = [lineNumber]): Promise<void> {
         this.validateStep(filePath, lineNumber);
         if (mode === 'resume') {
             const previous = this.value.execution;
@@ -495,14 +497,24 @@ export class VanessaControlSession {
             }
         }
         this.require(mode === 'resume' ? 'runCurrent' : mode);
+        const selectedScenario = mode === 'runScenario';
+        if (selectedScenario) {
+            if (sourceText === undefined) { throw new Error('Open a saved feature.'); }
+            this.require('loadFeature');
+            this.require('selectStep');
+        }
         if (sourceText !== undefined) { this.require('editorContent'); this.require('openFeature'); }
         if (sourceText !== undefined && mode === 'runFromLine') { this.require('selectStep'); this.require('runCurrent'); }
         if (sourceText !== undefined && mode === 'runFeature') { this.require('runAll'); }
-        const withBreakpoints = (mode === 'runFromLine' || mode === 'runFeature') && !!this.value.breakpoints?.lines.length && sameVanessaFeaturePath(filePath, this.value.breakpoints.filePath);
+        const withBreakpoints = (selectedScenario || mode === 'runFromLine' || mode === 'runFeature') &&
+            !!this.value.breakpoints?.lines.length && sameVanessaFeaturePath(filePath, this.value.breakpoints.filePath);
         // The legacy combined reload can lose its completion callback. Load only the requested file before running the tree.
-        const loadBeforeRun = mode === 'runFeature' && sourceText !== undefined && !withBreakpoints &&
-            this.value.capabilities?.loadFeature.supported && !this.value.capabilities.runAsync.supported;
-        if (withBreakpoints) { for (const capability of ['loadFeature', 'openFeature', 'editor', 'selectStep', 'runCurrent'] as const) { this.require(capability); } }
+        const loadBeforeRun = !withBreakpoints && (selectedScenario || mode === 'runFeature' && sourceText !== undefined &&
+            this.value.capabilities?.loadFeature.supported && !this.value.capabilities.runAsync.supported);
+        if (withBreakpoints) {
+            for (const capability of ['loadFeature', 'openFeature', 'editor', 'selectStep'] as const) { this.require(capability); }
+            if (!selectedScenario) { this.require('runCurrent'); }
+        }
         if (withBreakpoints && mode === 'runFeature') { this.require('runAll'); }
         await this.mutate(async generation => {
             const assertSource = () => { if (isCurrent && !isCurrent()) { throw new Error('The active feature changed.'); } };
@@ -531,7 +543,7 @@ export class VanessaControlSession {
                 const source = sourceText === undefined ? undefined : { filePath, text: sourceText };
                 let stepFilePath = filePath;
                 if (source && !withBreakpoints) {
-                    const loadForRun = mode === 'runFeature' || mode === 'runFromLine';
+                    const loadForRun = selectedScenario || mode === 'runFeature' || mode === 'runFromLine';
                     if (loadBeforeRun) {
                         const editor = await this.readEditor(generation);
                         if (editor?.dirty && sameVanessaFeaturePath(filePath, editor.featurePath)) { throw new VanessaEditorSourceMismatchError(); }
@@ -579,18 +591,38 @@ export class VanessaControlSession {
                     assertSource();
                     await this.invokeChecked('load_features', { path: filePath }, generation);
                     await this.invokeChecked('open_feature_file', { filePath }, generation);
-                    if (mode !== 'runFeature') { await this.invokeChecked('select_step', { lineNumber }, generation); }
+                    if (mode === 'runFromLine') { await this.invokeChecked('select_step', { lineNumber }, generation); }
                     // Reload clears foreign points too. Restore the captured same-file state even
                     // if the local source tab switched meanwhile; the final guard still blocks execution.
                     points = await this.breakpointSync.restore(target, points, owned, this.breakpointPorts(generation, undefined, source));
                     this.publishBreakpoints(filePath, points, generation);
                     const selected = await ports.editor();
-                    if (!selected || selected.dirty || !sameVanessaFeaturePath(filePath, selected.featurePath) || mode !== 'runFeature' && selected.lineNumber !== lineNumber) {
+                    if (!selected || selected.dirty || !sameVanessaFeaturePath(filePath, selected.featurePath) || mode === 'runFromLine' && selected.lineNumber !== lineNumber) {
                         throw new Error('Vanessa did not select the requested feature step.');
                     }
                 }
+                if (selectedScenario) {
+                    let selection: number | undefined;
+                    for (const candidate of scenarioLines) {
+                        assertSource();
+                        try { await this.invokeChecked('select_step', { lineNumber: candidate }, generation); }
+                        catch (error) {
+                            // Older Vanessa classifies exported calls and some blocks as non-selectable rows.
+                            if (error instanceof VanessaCommandRejectedError && /нет шага, который можно выполнить|no (?:executable )?step (?:that can be executed|to execute)/iu.test(error.message)) { continue; }
+                            throw error;
+                        }
+                        selection = candidate;
+                        break;
+                    }
+                    if (selection === undefined) { throw new VanessaCommandRejectedError('Vanessa needs a selectable step inside this scenario.'); }
+                    const editor = await this.readEditor(generation, source);
+                    if (!editor || editor.dirty || !sameVanessaFeaturePath(filePath, editor.featurePath) || editor.lineNumber !== selection) {
+                        throw new VanessaEditorSourceMismatchError();
+                    }
+                }
                 assertSource();
-                const args = mode === 'resume' ? { mode: 'fromCurrentStep' }
+                const args = selectedScenario ? { mode: 'selected' }
+                    : mode === 'resume' ? { mode: 'fromCurrentStep' }
                     : withBreakpoints || loadBeforeRun ? { mode: mode === 'runFeature' ? 'all' : 'fromCurrentStep' }
                         : source && (mode === 'runFeature' || mode === 'runFromLine') ? { filePath, ...(mode === 'runFromLine' ? { lineNumber } : {}), mode: mode === 'runFeature' ? 'reloadAndRun' : 'reloadAndRunFromLine' }
                         : mode === 'runFeature' ? { filePath, mode: 'reloadAndRun' }
@@ -642,7 +674,7 @@ export class VanessaControlSession {
                 const matches = observed?.featurePath && sameVanessaFeaturePath(filePath, observed.featurePath) &&
                     (mode !== 'oneStep' || observed.lineNumber === lineNumber);
                 const after = this.value.capabilities?.results.supported ? await this.readResults(generation) : undefined;
-                if ((mode === 'runFeature' || mode === 'runFromLine') && before?.runId !== undefined && (!after?.runId || after.runId === before.runId)) {
+                if ((selectedScenario || mode === 'runFeature' || mode === 'runFromLine') && before?.runId !== undefined && (!after?.runId || after.runId === before.runId)) {
                     this.failureValue = undefined;
                     this.set({ ...this.value, execution: Object.freeze({ ...this.value.execution!, status: 'unknown', steps: undefined, currentLineNumber: undefined }) });
                     throw new VanessaCommandRejectedError(safeFailureText(commandFailureText(result) ?? 'Vanessa did not confirm a new run. Refresh state before retrying.'));
@@ -808,7 +840,7 @@ export class VanessaControlSession {
     }
 
     private async mutate(work: (generation: number) => Promise<void>, invalidateExecutionOnError = true): Promise<void> {
-        if (this.mutation || ['running', 'stopping'].includes(this.value.status)) { throw new Error('Vanessa is busy. Stop or wait for the current operation.'); }
+        if (this.busy) { throw new VanessaControlBusyError(); }
         if (this.value.status !== 'ready') { throw new Error('Refresh Vanessa state before executing a command.'); }
         const generation = this.value.generation;
         this.mutation = true;
@@ -886,7 +918,8 @@ export class VanessaControlSession {
                 ...(failedSteps.length === 1 ? { stepDescription: safeFailureText(failedSteps[0][1]) } : {}) };
             const expanded = source?.resultMap && await source.resultMap.isCurrent() ? source.resultMap.steps : undefined;
             this.checkGeneration(generation);
-            const steps = source && execution ? mapVanessaStepResults(result, source.text, execution.mode === 'runFeature' ? 1 : execution.lineNumber, this.observedScenarioName, expanded, source.filePath)
+            const steps = source && execution ? mapVanessaStepResults(result, source.text,
+                execution.mode === 'runFeature' || execution.mode === 'runScenario' ? 1 : execution.lineNumber, this.observedScenarioName, expanded, source.filePath)
                 .filter(step => execution.mode !== 'oneStep' || step.lineNumber === execution.lineNumber) : [];
             return { hash: createHash('sha256').update(JSON.stringify(result)).digest('hex'), parsed, message, presentation, steps,
                 runId: typeof structured?.runId === 'string' ? structured.runId : undefined };

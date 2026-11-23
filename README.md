@@ -20,7 +20,7 @@
 
 KOT помогает писать сценарии СППР и Vanessa Automation: подсказывает шаги и параметры, открывает вложенные вызовы, собирает тесты и связывает редактор с работающей Vanessa. Свойства теста, библиотека шагов, информационные базы и результаты доступны в одном рабочем пространстве.
 
-[Начать работу](docs/QUICK_START.md) · [Учебная мастерская](examples/kot-workshop/README.md) · [Все документы](#все-документы) · [Изменения 3.1.1](CHANGELOG.md) · [История проекта на Infostart](https://infostart.ru/1c/articles/2834110/)
+[Начать работу](docs/QUICK_START.md) · [Учебная мастерская](examples/kot-workshop/README.md) · [Все документы](#все-документы) · [Изменения 3.2.0](CHANGELOG.md) · [История проекта на Infostart](https://infostart.ru/1c/articles/2834110/)
 
 ![Редактор feature, Менеджер тестов и свойства в KOT 3.0.0](docs/assets/workspace.png)
 
@@ -153,7 +153,7 @@ https://github.com/user-attachments/assets/eaa3e411-c519-40f0-ac45-1028396db667
 
 Справочники поставщиков: [компилятор СППР на ИТС](https://its.1c.ru/db/sppr2doc#content:124:hdoc), [JSON-параметры Vanessa](https://pr-mex.github.io/vanessa-automation/dev/JsonParams/JsonParamsRU/), [программа работы с файлами 1С для MXL](https://v8.1c.ru/static/1s-predpriyatie-rabota-s-faylami/).
 
-Документация описывает **3.1.1**. Сверяйте её с версией установленного расширения. Локальные операции 1С на macOS/Linux пока не являются поддержанным сценарием KOT.
+Документация описывает **3.2.0**. Сверяйте её с версией установленного расширения. Локальные операции 1С на macOS/Linux пока не являются поддержанным сценарием KOT.
 
 <a id="статус-и-ограничения"></a>
 

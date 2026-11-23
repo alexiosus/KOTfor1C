@@ -1,8 +1,9 @@
 import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import fs from 'node:fs/promises';
-import { VanessaFeatureControl, isExecutableFeatureLine, isExecutableVanessaFragmentLine, type VanessaFeatureDocument } from './vanessaControlFeature';
+import { VanessaFeatureControl, isExecutableFeatureLine, isExecutableVanessaFragmentLine, type VanessaFeatureDocument, type VanessaFeatureRunMode } from './vanessaControlFeature';
 import type { VanessaControlFailure, VanessaControlSession } from './vanessaControlSession';
+import { acquireVanessaControl } from './vanessaControlLease';
 import { isExecutableYamlControlLine, type VanessaYamlControl } from './vanessaControlYaml';
 import { VanessaExecutionHighlighter } from './vanessaControlHighlighting';
 
@@ -88,24 +89,33 @@ export function registerVanessaControlCommands(context: vscode.ExtensionContext,
             editor.selection = new vscode.Selection(line, 0, line, 0);
             editor.revealRange(editor.document.lineAt(line).range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
         },
-        execute: async (mode, filePath, line) => {
+        execute: async (mode, filePath, line, scenarioLines) => {
             if (vscode.debug.activeDebugSession) { throw new Error(vscode.l10n.t('Stop the active debugger before controlling Vanessa manually.')); }
-            if (!context.workspaceState.get('kotTestToolkit.vanessaControl.preparationNotice', false)) {
+            if (mode !== 'runScenario' && !context.workspaceState.get('kotTestToolkit.vanessaControl.preparationNotice', false)) {
                 void kotUi.showInformationMessage(vscode.l10n.t('Manual execution skips preceding steps and preparation. Existing Vanessa variables and test clients are reused.'));
                 void context.workspaceState.update('kotTestToolkit.vanessaControl.preparationNotice', true);
             }
             executedSource = current();
+            const generation = session.snapshot.generation;
+            const acquire = <T>(work: () => Promise<T>) => mode !== 'runScenario' ? work() : acquireVanessaControl(() => {
+                if (session.snapshot.generation !== generation) { throw new Error(vscode.l10n.t('The Vanessa connection changed. Run the test again.')); }
+                return work();
+            }, () => session.snapshot.status !== 'ready' || !!session.snapshot.runActive);
+            const title = mode === 'runScenario' ? vscode.l10n.t('Vanessa: run scenario from the start')
+                : mode === 'oneStep' ? vscode.l10n.t('Vanessa: execute one step') : vscode.l10n.t('Vanessa: run from this step');
             return kotUi.withProgress({ location: vscode.ProgressLocation.Notification,
-                title: mode === 'oneStep' ? vscode.l10n.t('Vanessa: execute one step') : vscode.l10n.t('Vanessa: run from this step') }, async progress => {
+                title }, async progress => {
                 let subscription: { dispose(): void } | undefined;
                 let finish: ((passed: boolean) => Promise<void>) | undefined;
+                let passed = false;
                 try {
-                    if (mode === 'runFromLine' && session.snapshot.capabilities?.breakpoints.supported && session.snapshot.capabilities.loadFeature.supported &&
-                        session.snapshot.capabilities.editor.supported && session.snapshot.capabilities.runCurrent.supported) {
+                    const capabilities = session.snapshot.capabilities;
+                    if (mode !== 'oneStep' && capabilities?.breakpoints.supported && capabilities.loadFeature.supported &&
+                        capabilities.editor.supported && (mode === 'runScenario' ? capabilities.runScenario.supported : capabilities.runCurrent.supported)) {
                         const source = executedSource;
-                        await session.synchronizeBreakpoints(filePath, undefined, () => {
+                        await acquire(() => session.synchronizeBreakpoints(filePath, undefined, () => {
                             const active = current(); return !!source && active?.uri === source.uri && active.text === source.text && !active.dirty;
-                        }, source?.text);
+                        }, source?.text));
                     }
                     let previousMessage: string | undefined;
                     subscription = session.onDidChange(snapshot => {
@@ -114,20 +124,22 @@ export function registerVanessaControlCommands(context: vscode.ExtensionContext,
                         if (message && message !== previousMessage) { previousMessage = message; progress.report({ message }); }
                     });
                     const source = executedSource;
-                    if (mode === 'runFromLine') { finish = trackRun?.(filePath); }
-                    await session.run(mode, filePath, line, source?.text, () => {
+                    if (mode !== 'oneStep') { finish = trackRun?.(filePath); }
+                    await acquire(() => session.run(mode, filePath, line, source?.text, () => {
                         const active = current(); return !!source && active?.uri === source.uri && active.text === source.text && !active.dirty && active.line === source.line;
-                    });
+                    }, scenarioLines));
                     const execution = session.snapshot.execution;
+                    passed = execution?.status === 'passed';
                     if (execution?.status === 'passed' && execution.nextLineNumber && execution.nextLineNumber < line) {
                         void kotUi.showInformationMessage(vscode.l10n.t('Vanessa selected an earlier line. Automatic loop traversal is unavailable for this runtime; select the next step manually.'));
                     }
                     return execution?.status === 'passed' && !vscode.debug.activeDebugSession ? execution.nextLineNumber : undefined;
-                } finally { await finish?.(session.snapshot.execution?.status === 'passed'); subscription?.dispose(); update(); }
+                } finally { await finish?.(passed); subscription?.dispose(); update(); }
             });
         }
     });
-    const run = async (mode: 'oneStep' | 'runFromLine', compiled = false, target?: vscode.Uri) => {
+    const run = async (mode: VanessaFeatureRunMode, compiled = false, target?: vscode.Uri,
+        scenarioLocation?: Pick<VanessaFeatureDocument, 'line' | 'version'>) => {
         try {
             if (target?.scheme) {
                 const editor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === target.toString());
@@ -135,8 +147,20 @@ export function registerVanessaControlCommands(context: vscode.ExtensionContext,
                 if (vscode.window.activeTextEditor !== editor) {
                     await vscode.window.showTextDocument(editor.document, { viewColumn: editor.viewColumn, preserveFocus: false });
                 }
+                if (scenarioLocation) {
+                    const active = currentEditor();
+                    const { line, version } = scenarioLocation;
+                    if (active?.document !== editor.document || active.document.version !== version ||
+                        !Number.isInteger(line) || line < 0 || line >= active.document.lineCount) {
+                        throw new Error('The feature changed. Run the action again.');
+                    }
+                    active.selection = new vscode.Selection(line, 0, line, 0);
+                }
             }
             const requested = current();
+            if (mode === 'runScenario' && (!requested?.uri.startsWith('file:') || !/\.feature$/iu.test(requested.uri))) {
+                throw new Error('Open a saved feature.');
+            }
             if (!await ensureConnected()) { return; }
             const active = current();
             if (!requested || active?.uri !== requested.uri || active.text !== requested.text || active.line !== requested.line) {
@@ -145,7 +169,7 @@ export function registerVanessaControlCommands(context: vscode.ExtensionContext,
             if (mode === 'oneStep' && !compiled && isExecutableVanessaFragmentLine(active) && !isExecutableFeatureLine(active, active.line)) {
                 await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.tryYamlStep');
             }
-            else if (yamlControl && /\.yaml$/iu.test(active.uri)) {
+            else if (mode !== 'runScenario' && yamlControl && /\.yaml$/iu.test(active.uri)) {
                 if (mode === 'oneStep' && !compiled) { await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.tryYamlStep'); }
                 else { await yamlControl.run(mode); }
             }
@@ -157,6 +181,8 @@ export function registerVanessaControlCommands(context: vscode.ExtensionContext,
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.oneStep', (target?: vscode.Uri) => run('oneStep', false, target)),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.oneCompiledStep', (target?: vscode.Uri) => run('oneStep', true, target)),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.runFromLine', (target?: vscode.Uri) => run('runFromLine', false, target)),
+        vscode.commands.registerCommand('kotTestToolkit.vanessaControl.runScenario',
+            (target?: vscode.Uri, location?: Pick<VanessaFeatureDocument, 'line' | 'version'>) => run('runScenario', false, target, location)),
         session.onDidChange(update), vscode.window.onDidChangeActiveTextEditor(update),
         vscode.window.onDidChangeTextEditorSelection(update), vscode.window.onDidChangeVisibleTextEditors(update),
         vscode.workspace.onDidChangeTextDocument(update), vscode.debug.onDidStartDebugSession(update), vscode.debug.onDidTerminateDebugSession(update));

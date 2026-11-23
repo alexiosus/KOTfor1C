@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/alexiosus/KOTfor1C",
-  "version": "3.1.1",
+  "version": "3.2.0",
   "engines": {
     "vscode": "^1.106.0"
   },
@@ -203,20 +203,20 @@
           },
           "kotTestToolkit.editor.showActionButtons": {
             "type": "boolean",
-            "default": false,
+            "default": true,
             "description": "%config.editor.showActionButtons.description%",
             "order": 1.6
           },
           "kotTestToolkit.editor.showYamlActionButtons": {
             "type": "boolean",
-            "default": false,
+            "default": true,
             "scope": "resource",
             "description": "%config.editor.showYamlActionButtons.description%",
             "order": 1.61
           },
           "kotTestToolkit.editor.showFeatureActionButtons": {
             "type": "boolean",
-            "default": false,
+            "default": true,
             "scope": "resource",
             "description": "%config.editor.showFeatureActionButtons.description%",
             "order": 1.62
@@ -1558,6 +1558,12 @@
         "enablement": "!inDebugMode"
       },
       {
+        "command": "kotTestToolkit.vanessaControl.runScenario",
+        "title": "%cmd.vanessaControl.runScenario.title%",
+        "category": "%cmd.category%",
+        "enablement": "resourceExtname == .feature && resourceScheme == file && !inDebugMode"
+      },
+      {
         "command": "kotTestToolkit.editorMenu.vanessaControl.oneStep",
         "title": "%cmd.vanessaControl.oneStep.title%",
         "enablement": "!inDebugMode"
@@ -1565,6 +1571,11 @@
       {
         "command": "kotTestToolkit.editorMenu.vanessaControl.runFromLine",
         "title": "%cmd.vanessaControl.runFromLine.title%",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.vanessaControl.runScenario",
+        "title": "%cmd.vanessaControl.runScenario.title%",
         "enablement": "!inDebugMode"
       },
       {
@@ -1963,6 +1974,11 @@
         "command": "kotTestToolkit.vanessaControl.oneStep",
         "key": "f11",
         "when": "editorTextFocus && (resourceExtname == .feature || resourceExtname == .yaml) && kotTestToolkit.vanessaControlCanStep && !inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.runScenario",
+        "key": "alt+f5",
+        "when": "editorTextFocus && resourceExtname == .feature && resourceScheme == file && !inDebugMode"
       }
     ],
     "menus": {
@@ -2745,6 +2761,10 @@
           "when": "false"
         },
         {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.runScenario",
+          "when": "false"
+        },
+        {
           "command": "kotTestToolkit.editorMenu.vanessaControl.toggleBreakpoint",
           "when": "false"
         },
@@ -2855,6 +2875,11 @@
           "command": "kotTestToolkit.editorMenu.vanessaControl.runFromLine",
           "when": "(resourceExtname == .feature || resourceExtname == .yaml)",
           "group": "01_execution@3"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.runScenario",
+          "when": "resourceExtname == .feature && resourceScheme == file",
+          "group": "01_execution@4"
         },
         {
           "command": "kotTestToolkit.editorMenu.vanessaControl.runSelection",

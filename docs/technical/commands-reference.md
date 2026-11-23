@@ -155,8 +155,10 @@
 | Отключиться от Vanessa | `kotTestToolkit.vanessaControl.detach` |
 | Vanessa: Выполнить один шаг | `kotTestToolkit.vanessaControl.oneStep` |
 | Vanessa: Запустить с этого шага | `kotTestToolkit.vanessaControl.runFromLine` |
+| Vanessa: Выполнить сценарий с начала | `kotTestToolkit.vanessaControl.runScenario` |
 | Vanessa: Выполнить один шаг | `kotTestToolkit.editorMenu.vanessaControl.oneStep` |
 | Vanessa: Запустить с этого шага | `kotTestToolkit.editorMenu.vanessaControl.runFromLine` |
+| Vanessa: Выполнить сценарий с начала | `kotTestToolkit.editorMenu.vanessaControl.runScenario` |
 | Переключить точку останова KOT | `kotTestToolkit.vanessaControl.toggleBreakpoint` |
 | Переключить точку останова KOT | `kotTestToolkit.editorMenu.vanessaControl.toggleBreakpoint` |
 | Точки останова Vanessa | `kotTestToolkit.vanessaControl.listBreakpoints` |

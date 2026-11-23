@@ -5,6 +5,7 @@ import { VanessaControlSession, type VanessaControlSnapshot } from './vanessaCon
 import { VanessaControlHttpTransport } from './vanessaControlTransport';
 import { normalizeVanessaControlEndpoint, assessVanessaControlCapabilities, sameVanessaFeaturePath } from './vanessaControlProtocol';
 import { awaitVanessaControlReady } from './vanessaControlReadiness';
+import { acquireVanessaControl } from './vanessaControlLease';
 import { VanessaManagedRun, type VanessaManagedRunRequest, type VanessaManagedRunResult } from './vanessaControlManagedRun';
 import { prepareVanessaRunSettings, restoreVanessaRunSettings, vanessaSettingsToRestore, type VanessaSettingRestore, type VanessaSettingsReply } from './vanessaControlSettings';
 import { VanessaSettingsReport } from './vanessaControlSettingsReport';
@@ -330,7 +331,7 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
     };
     let settingsReport: VanessaSettingsReport | undefined;
     const managed = new VanessaManagedRun({ start: startConfigured,
-        currentGeneration: () => !disposed && !session.busy && session.snapshot.status === 'ready' && session.snapshot.capabilities ? session.snapshot.generation : undefined,
+        currentGeneration: () => !disposed && session.snapshot.status === 'ready' && session.snapshot.capabilities ? session.snapshot.generation : undefined,
         canApplySettings: () => {
             const capabilities = session.snapshot.capabilities;
             return !!(capabilities?.settingsRead.supported && capabilities.settingsWrite.supported && capabilities.settingsPreserveCi.supported);
@@ -402,17 +403,30 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
             }
         },
         run: async (filePath, sourceText, isCurrent, breakpointLines) => {
-            if (breakpointLines?.length) { await session.synchronizeBreakpoints(filePath, breakpointLines, isCurrent, sourceText); }
+            const generation = session.snapshot.generation;
+            // The client catalog can take the local lease as soon as a new session reports Ready.
+            const acquire = <T>(work: () => Promise<T>) => acquireVanessaControl(() => {
+                if (disposed || session.snapshot.generation !== generation) {
+                    throw new Error(vscode.l10n.t('The Vanessa connection changed. Run the test again.'));
+                }
+                return work();
+            }, () => session.snapshot.status !== 'ready' || !!session.snapshot.runActive);
+            if (breakpointLines?.length) {
+                await acquire(() => session.synchronizeBreakpoints(filePath, breakpointLines, isCurrent, sourceText));
+            }
             const log = runLogPath();
             if (!log && options.trackRun && unlinkedLogWarningGeneration !== session.snapshot.generation) {
                 unlinkedLogWarningGeneration = session.snapshot.generation;
                 void kotUi.showWarningMessage(vscode.l10n.t('This Vanessa session has no linked execution log. For live step highlighting, select Execution log… in the Vanessa menu or start a managed session.'));
             }
             const finish = options.trackRun?.(filePath, log);
+            let passed = false;
             try {
-                await session.run('runFeature', filePath, 1, sourceText, isCurrent);
-                return session.snapshot.execution?.status === 'running' ? 'unknown' : session.snapshot.execution?.status ?? 'unknown';
-            } finally { await finish?.(session.snapshot.execution?.status === 'passed'); }
+                await acquire(() => session.run('runFeature', filePath, 1, sourceText, isCurrent));
+                const status = session.snapshot.execution?.status;
+                passed = status === 'passed';
+                return status === 'running' ? 'unknown' : status ?? 'unknown';
+            } finally { await finish?.(passed); }
         }
     });
     const resume = async () => {

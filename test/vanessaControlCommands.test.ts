@@ -87,6 +87,18 @@ test('run from line rejects Background because Vanessa requires an independent s
     assert.equal(sent, 1);
 });
 
+test('run scenario from the start selects within the current scenario from its heading or body', async () => {
+    const feature = '# language: en\nFeature: Safe\nBackground:\n    And Delay 0\nScenario: First\n    And Delay 1\n' +
+        'Scenario: Second\n    *Group\n        And Call an export\n    And Delay 2\nScenario: Third\n    And Delay 3\n';
+    let cursor = 3;
+    const sent: unknown[] = [];
+    const control = new VanessaFeatureControl({ current: () => ({ ...document(), text: feature, line: cursor }),
+        exists: async () => true, save: async () => true, execute: async (...args) => { sent.push(args); } });
+    await assert.rejects(control.run('runScenario'), /inside a scenario/u);
+    for (const line of [6, 7, 9]) { cursor = line; await control.run('runScenario'); }
+    assert.deepEqual(sent, Array.from({ length: 3 }, () => ['runScenario', document().filePath, 9, [9, 10]]));
+});
+
 test('F11 advances only to a runtime-selected executable line while the source and selection stay unchanged', async () => {
     for (const mode of ['same', 'moved', 'switched', 'edited', 'invalid'] as const) {
         let source = document(); const selected: number[] = [];

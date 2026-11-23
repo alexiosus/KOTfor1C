@@ -4,7 +4,7 @@ import { getScenarioLanguageForDocument } from './gherkinLanguage';
 import { getTranslator, type Translator } from './localization';
 import {
     buildFeatureEditorActions, FEATURE_EDITOR_COMMAND, getFeatureStepTagAction, isFeatureEditorTarget,
-    planFeatureEditorEdit, featureScenarioTitle,
+    planFeatureEditorEdit, featureScenarioTitle, scanFeatureStructure,
     type FeatureEditorEditOptions, type FeatureEditorSource, type FeatureStepTag, type FeatureVariableKind
 } from './featureEditorActions';
 import { normalizeFeatureTags } from './featureTags';
@@ -66,10 +66,19 @@ export class FeatureEditorCodeLensProvider implements vscode.CodeLensProvider {
     async provideCodeLenses(document: vscode.TextDocument, token: vscode.CancellationToken): Promise<vscode.CodeLens[]> {
         const t = await this.translator;
         if (token.isCancellationRequested) { return []; }
-        const actions = buildFeatureEditorActions(sourceFor(document), t);
+        const source = sourceFor(document);
+        const structure = scanFeatureStructure(source);
+        const actions = buildFeatureEditorActions(source, t, structure);
         const properties = actions.length ? [new vscode.CodeLens(new vscode.Range(actions[0].line, 0, actions[0].line, 0),
             { title: t('Edit scenario and properties'), command: 'kotTestToolkit.openScenarioEditor', arguments: [document.uri] })] : [];
-        return [...properties, ...actions.map(action => new vscode.CodeLens(
+        const runs = document.uri.scheme === 'file' && actions.length ? structure.sections
+            .filter(section => section.kind === 'scenario' || section.kind === 'outline')
+            .map(({ line: { number: line } }) => new vscode.CodeLens(new vscode.Range(line, 0, line, 0), {
+                title: `$(play) ${t('Run scenario from the start')}`,
+                command: 'kotTestToolkit.vanessaControl.runScenario',
+                arguments: [document.uri, { line, version: source.version }]
+            })) : [];
+        return [...properties, ...runs, ...actions.map(action => new vscode.CodeLens(
             new vscode.Range(action.line, 0, action.line, 0),
             { title: action.title, command: FEATURE_EDITOR_COMMAND, arguments: [action.target] }
         ))];

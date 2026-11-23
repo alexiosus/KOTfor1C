@@ -1,4 +1,4 @@
-export type VanessaControlCapability = 'state' | 'editor' | 'editorContent' | 'openFeature' | 'loadFeature' | 'selectStep' | 'runFromLine' | 'runFeature' | 'runAll' | 'runCurrent' | 'oneStep' | 'stop' | 'results' | 'breakpoints'
+export type VanessaControlCapability = 'state' | 'editor' | 'editorContent' | 'openFeature' | 'loadFeature' | 'selectStep' | 'runFromLine' | 'runFeature' | 'runAll' | 'runCurrent' | 'runScenario' | 'oneStep' | 'stop' | 'results' | 'breakpoints'
     | 'clientProfilesRead' | 'clientProfilesWrite' | 'clientConnect' | 'clientDisconnect' | 'clientClose'
     | 'variablesRead' | 'variablesWrite' | 'formTree' | 'formWindow' | 'formElement' | 'formWindows' | 'formActivateWindow' | 'recording' | 'formChecks' | 'formSuggestions'
     | 'environment' | 'runtimeSyntax' | 'runtimeSearch' | 'managerLog' | 'clientLog' | 'screenshotWindows' | 'screenshot'
@@ -93,6 +93,7 @@ export function assessVanessaControlCapabilities(tools: readonly unknown[]): Van
         runFromLine: { tool: 'run_scenario', fields: { mode: 'string', filePath: 'string', lineNumber: 'integer' }, literals: { mode: ['reloadAndRunFromLine'] } },
         runFeature: { tool: 'run_scenario', fields: { mode: 'string', filePath: 'string' }, literals: { mode: ['reloadAndRun'] } },
         runAll: { tool: 'run_scenario', fields: { mode: 'string' }, literals: { mode: ['all'] } },
+        runScenario: { tool: 'run_scenario', fields: { mode: 'string' }, literals: { mode: ['selected'] } },
         runAsync: { tool: 'run_scenario', fields: { mode: 'string', wait: 'boolean' }, literals: { mode: ['reloadAndRun'], wait: [false] } },
         runCurrent: { tool: 'run_scenario', fields: { mode: 'string' }, literals: { mode: ['fromCurrentStep'] } },
         oneStep: { tool: 'execute_feature_step', fields: { filePath: 'string', lineNumber: 'integer' } },

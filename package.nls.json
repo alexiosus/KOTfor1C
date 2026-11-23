@@ -245,6 +245,7 @@
   "cmd.vanessaControl.detach.title": "Detach from Vanessa",
   "cmd.vanessaControl.oneStep.title": "Vanessa: Execute one step",
   "cmd.vanessaControl.runFromLine.title": "Vanessa: Run from this step",
+  "cmd.vanessaControl.runScenario.title": "Vanessa: Run scenario from the start",
   "cmd.vanessaControl.toggleBreakpoint.title": "Toggle KOT breakpoint",
   "cmd.vanessaControl.listBreakpoints.title": "Vanessa breakpoints",
   "cmd.vanessaControl.tryYamlStep.title": "Vanessa: Try YAML step without compilation",
