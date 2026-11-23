@@ -2841,7 +2841,7 @@
   "Could not connect the selected test client. Check its settings in Infobase Manager.": "Could not connect the selected test client. Check its settings in Infobase Manager.",
   "Designer": "Designer",
   "Enterprise": "Enterprise",
-  "No saved test clients.": "No saved test clients.",
+  "Add a test client to open this infobase in Vanessa.": "Add a test client to open this infobase in Vanessa.",
   "Open with Vanessa": "Open with Vanessa",
   "Password": "Password",
   "Prepare configured session": "Prepare configured session",

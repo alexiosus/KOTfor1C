@@ -195,7 +195,7 @@
                 maintenanceItem(loc.updateFromTemplate || 'Update from installed template', 'package', 'updateFromTemplate', item),
                 maintenanceItem(`${loc.exportCf}…`, 'save', 'exportCf', item),
                 maintenanceHeading(loc.kotHeading),
-                maintenanceItem(loc.openVanessa || 'Open with Vanessa', 'plug', 'openVanessa', item),
+                ...(item.clients?.length ? [maintenanceItem(loc.openVanessa || 'Open with Vanessa', 'plug', 'openVanessa', item)] : []),
                 maintenanceItem(loc.openFormExplorer, 'telescope', 'openFormExplorer', item),
                 maintenanceItem(loc.openDesigner, 'tools', 'openDesigner', item),
                 maintenanceItem(loc.vanessaClients || 'Vanessa test clients', 'plug', 'vanessaClients', item),
@@ -212,7 +212,7 @@
         const clients = item.clients || [];
         if (!clients.length) {
             const empty = document.createElement('div'); empty.className = 'infobase-client-row';
-            const label = document.createElement('span'); label.className = 'infobase-client-empty'; label.textContent = loc.noClients || 'No saved test clients';
+            const label = document.createElement('span'); label.className = 'infobase-client-empty'; label.textContent = loc.noClients || 'Add a test client to open this infobase in Vanessa.';
             empty.append(label); group.appendChild(empty);
         }
         for (const client of clients) {

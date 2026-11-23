@@ -2841,7 +2841,7 @@
   "Could not connect the selected test client. Check its settings in Infobase Manager.": "Не удалось подключить выбранный клиент тестирования. Проверьте его параметры в менеджере баз.",
   "Designer": "Конфигуратор",
   "Enterprise": "Предприятие",
-  "No saved test clients.": "Нет сохранённых клиентов тестирования.",
+  "Add a test client to open this infobase in Vanessa.": "Добавьте тест-клиента, чтобы открыть эту базу в Vanessa.",
   "Open with Vanessa": "Открыть через Vanessa",
   "Password": "Пароль",
   "Prepare configured session": "Подготовить сеанс с настройками запуска",
