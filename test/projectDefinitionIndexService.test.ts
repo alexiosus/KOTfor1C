@@ -289,6 +289,43 @@ test('routes an open file from an external configured library to its workspace p
     assert.deepEqual(snapshot.definitions.map(item => item.template), ['External export']);
 });
 
+test('routes a restored compiled feature in an external FeatureFolder while project configuration loads', async t => {
+    const fileSystem = new MemoryFileSystem();
+    const library = '/workspace/b/library';
+    const output = '/external/generated';
+    const feature = `${output}/model-id/part-1/built.feature`;
+    fileSystem.setFile(`${library}/exports.feature`, exportFeature('Project B export'));
+    fileSystem.setFile(feature, exportFeature('Generated feature'));
+    const watches = new WatchHarness();
+    const loaded = deferred<readonly ProjectDefinitionIndexConfiguration[]>();
+    const service = new ProjectDefinitionIndexService({
+        fileSystem, parserVersion: 'parser-v1', watch: watches.watch, loadConfigurations: () => loaded.promise
+    });
+    t.after(() => service.dispose());
+    const resource = localFileUri(feature).replace(/^(file:\/\/\/[a-z]):(?=\/)/iu, '$1%3A');
+    const snapshotPromise = service.ensureReady(resource);
+    loaded.resolve([
+        { ...configuration('a', '/workspace/a/library'), workspaceFolderPath: '/workspace/a', workspaceFolderUri: localFileUri('/workspace/a') },
+        { ...configuration('b', library), workspaceFolderPath: '/workspace/b', workspaceFolderUri: localFileUri('/workspace/b'), compiledFeatureFolderPath: output }
+    ]);
+    const snapshot = await snapshotPromise;
+    assert.equal(snapshot.profileId, 'b');
+    assert.equal(service.getSnapshot(resource), snapshot);
+    assert.deepEqual(snapshot.definitions.map(item => item.template), ['Project B export']);
+    assert.equal(fileSystem.directoryReads.includes(output), false);
+    assert.equal(watches.callbacks.has(output), false);
+});
+
+test('routes the physical path of an external compiler output directory through a configured alias', async t => {
+    const fileSystem = new MemoryFileSystem();
+    fileSystem.setRealpathAlias('/alias/generated', '/physical/generated');
+    const service = createService(fileSystem);
+    t.after(() => service.dispose());
+    service.startProfile({ ...configuration('active'), compiledFeatureFolderPath: '/alias/generated' });
+    const snapshot = await service.ensureReady(localFileUri('/physical/generated/built.feature'));
+    assert.equal(snapshot.profileId, 'active');
+});
+
 test('prefers workspace ownership over another workspace configured library root', async () => {
     const fileSystem = new MemoryFileSystem();
     const service = createService(fileSystem);

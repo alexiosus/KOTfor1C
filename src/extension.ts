@@ -117,6 +117,8 @@ import {
     resolveProjectDefinitionCacheDirectory
 } from './projectDefinitionCache';
 import { resolveProjectLibraryConfiguration } from './projectLibraryRoots';
+import { getCompilerBuildParameterValue } from './compilerBuildParameters';
+import { resolveWorkspaceOwnedPath } from './workspaceArtifactPath';
 import { ProjectDefinitionResolver } from './projectDefinitionResolver';
 import {
     openProjectDefinitionHandler,
@@ -302,6 +304,7 @@ function createProjectDefinitionIndexService(
             }
             const { YamlParametersManager } = await import('./yamlParametersManager.js');
             const profile = await YamlParametersManager.getInstance(context).loadActiveProfileSnapshot();
+            const featureFolder = getCompilerBuildParameterValue(profile.buildParameters, 'FeatureFolder');
             return folders.map(folder => {
                 const resolved = resolveProjectLibraryConfiguration({
                     workspaceFolderPath: folder.uri.fsPath,
@@ -316,6 +319,7 @@ function createProjectDefinitionIndexService(
                     workspaceFolderUri: folder.uri.toString(),
                     profileId: resolved.profileId,
                     libraryRootPaths: resolved.libraryRootPaths,
+                    compiledFeatureFolderPath: resolveWorkspaceOwnedPath(folder.uri.fsPath, featureFolder) ?? undefined,
                     warnings: resolved.warnings
                 };
             });
@@ -1294,7 +1298,16 @@ export async function activate(context: vscode.ExtensionContext) {
     );
     const snapshotService = new StepLibrarySnapshotService({
         resolver: projectDefinitionResolver,
-        scenarios: phaseSwitcherProvider,
+        scenarios: {
+            getScenarioCatalog: () => phaseSwitcherProvider.getScenarioCatalog(),
+            onDidUpdateScenarioCatalog: phaseSwitcherProvider.onDidUpdateScenarioCatalog,
+            onDidChangeScenarioArtifacts: phaseSwitcherProvider.onDidChangeScenarioArtifacts,
+            getProjectScenarioGroups: () => phaseSwitcherProvider.getProjectScenarioGroups(),
+            getCompiledScenarioResources: async resource => {
+                const project = projectDefinitionIndex.getSnapshot(resource) ?? await projectDefinitionIndex.ensureReady(resource);
+                return phaseSwitcherProvider.getCompiledScenarioResources(vscode.Uri.parse(project.workspaceFolderUri));
+            }
+        },
         standaloneFeatures: standaloneFeatureService
     });
     bindBranchRefresh(()=>refreshProjectBranch({
@@ -1398,7 +1411,8 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     });
     const refreshStepDefinitions = async (resource?: vscode.Uri) => {
-        await stepCatalogService.refresh(resource);
+        const project = resource ? projectDefinitionIndex.getSnapshot(resource) : undefined;
+        await stepCatalogService.refresh(project ? vscode.Uri.parse(project.workspaceFolderUri) : resource);
         await projectDefinitionIndex.reloadConfigurations();
         await projectDefinitionIndex.waitForIdle();
         await phaseSwitcherProvider.refreshFromExternalStateChange({ refreshCache: true });

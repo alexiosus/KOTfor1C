@@ -22,6 +22,8 @@ export interface ProjectDefinitionIndexConfiguration {
     readonly workspaceFolderUri: string;
     readonly profileId: string;
     readonly libraryRootPaths: readonly string[];
+    /** The compiler output belongs to this project for lookup only. */
+    readonly compiledFeatureFolderPath?: string;
     readonly warnings: readonly string[];
 }
 
@@ -188,9 +190,17 @@ function fileUri(filePath: string): string {
 
 function routingUri(value: string): string {
     const isWindowsFileUri = /^file:\/\/\/[a-z](?::|%3a)\//iu.test(value);
-    return process.platform === 'win32' || isWindowsFileUri
+    if (isWindowsFileUri) {
+        return value.replace(/^(file:\/\/\/[a-z])%3a(?=\/)/iu, '$1:').toLowerCase();
+    }
+    return process.platform === 'win32'
         ? value.toLocaleLowerCase()
         : value;
+}
+
+function externalProjectPaths(configuration: ProjectDefinitionIndexConfiguration): readonly string[] {
+    const output = configuration.compiledFeatureFolderPath;
+    return output ? [...configuration.libraryRootPaths, output] : configuration.libraryRootPaths;
 }
 
 function routingPrefixLength(value: string, prefix: string): number {
@@ -384,6 +394,7 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
         token?: CancellationTokenLike
     ): Promise<ProjectDefinitionSnapshot> {
         this.#throwIfCancellationRequested(token);
+        this.start();
         let coordinator = this.#coordinatorFor(resource);
         if (!coordinator && this.#configurationJob) {
             await this.#awaitCancellation(this.#configurationJob, token);
@@ -466,7 +477,7 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
             .sort((left, right) => right.matchLength - left.matchLength)[0]?.item;
 
         return findBestMatch(item => [item.configuration.workspaceFolderUri])
-            ?? findBestMatch(item => item.configuration.libraryRootPaths.map(fileUri));
+            ?? findBestMatch(item => externalProjectPaths(item.configuration).map(fileUri));
     }
 
     async #coordinatorForPhysicalResource(
@@ -512,7 +523,7 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
         };
 
         return await findBestMatch(item => [item.configuration.workspaceFolderPath])
-            ?? await findBestMatch(item => item.configuration.libraryRootPaths);
+            ?? await findBestMatch(item => externalProjectPaths(item.configuration));
     }
 
     #throwIfCancellationRequested(token?: CancellationTokenLike): void {
