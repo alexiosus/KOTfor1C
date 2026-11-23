@@ -1,7 +1,7 @@
 import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import fs from 'node:fs/promises';
-import { VanessaFeatureControl, isExecutableFeatureLine, type VanessaFeatureDocument } from './vanessaControlFeature';
+import { VanessaFeatureControl, isExecutableFeatureLine, isExecutableVanessaFragmentLine, type VanessaFeatureDocument } from './vanessaControlFeature';
 import type { VanessaControlFailure, VanessaControlSession } from './vanessaControlSession';
 import { isExecutableYamlControlLine, type VanessaYamlControl } from './vanessaControlYaml';
 import { VanessaExecutionHighlighter } from './vanessaControlHighlighting';
@@ -47,7 +47,8 @@ export function registerVanessaControlCommands(context: vscode.ExtensionContext,
         const snapshot = session.snapshot;
         if (source && (executable?.uri !== source.uri || executable.version !== source.version || executable.line !== source.line || executable.text !== source.text)) {
             executable = { uri: source.uri, version: source.version, line: source.line, text: source.text,
-                value: isExecutableFeatureLine(source, source.line) || !!yamlControl && isExecutableYamlControlLine(source) };
+                value: isExecutableFeatureLine(source, source.line) || !!yamlControl &&
+                    (isExecutableYamlControlLine(source) || isExecutableVanessaFragmentLine(source)) };
         }
         const available = snapshot.status === 'detached' || snapshot.status === 'ready' && !!snapshot.capabilities?.oneStep.supported &&
             !!snapshot.capabilities.editorContent.supported && !!snapshot.capabilities.openFeature.supported;
@@ -140,7 +141,10 @@ export function registerVanessaControlCommands(context: vscode.ExtensionContext,
             if (!requested || active?.uri !== requested.uri || active.text !== requested.text || active.line !== requested.line) {
                 throw new Error('The active source or selection changed while connecting to Vanessa. Run the command again.');
             }
-            if (yamlControl && /\.yaml$/iu.test(current()?.uri ?? '')) {
+            if (mode === 'oneStep' && !compiled && isExecutableVanessaFragmentLine(active) && !isExecutableFeatureLine(active, active.line)) {
+                await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.tryYamlStep');
+            }
+            else if (yamlControl && /\.yaml$/iu.test(active.uri)) {
                 if (mode === 'oneStep' && !compiled) { await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.tryYamlStep'); }
                 else { await yamlControl.run(mode); }
             }

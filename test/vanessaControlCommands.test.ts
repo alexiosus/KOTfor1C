@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { VanessaFeatureControl, isExecutableFeatureLine, sameSavedVanessaFeature, type VanessaFeatureDocument } from '../src/vanessaControlFeature';
+import { VanessaFeatureControl, isExecutableFeatureLine, isExecutableVanessaFragmentLine, sameSavedVanessaFeature, type VanessaFeatureDocument } from '../src/vanessaControlFeature';
 const text = '# language: en\nFeature: Safe\n\nScenario: Steps\n    And Delay 1\n    And a table\n      | a |\n    And a document\n      """\n      And not a step\n      """\n    # comment\n';
 const document = (): VanessaFeatureDocument => ({ uri: 'file:///C:/test.feature', filePath: 'C:\\test.feature', text, dirty: false, version: 1, line: 4 });
 
@@ -9,6 +9,14 @@ test('only saved feature step lines are executable; headers and payloads are nev
     for (const line of [0, 1, 2, 3, 6, 8, 9, 10, 11, -1, 1.1, 80]) { assert.equal(isExecutableFeatureLine(document(), line), false); }
     assert.equal(isExecutableFeatureLine({ ...document(), uri: 'untitled:Untitled-1' }, 4), false);
     assert.equal(isExecutableFeatureLine({ ...document(), uri: 'file:///scen.yaml' }, 4), false);
+});
+
+test('native SPPR fragment F11 availability excludes comments, payloads and parameter bindings', () => {
+    const source = { ...document(), uri: 'file:///KOT/scen.feature', text: '#language: en\nAnd a table\n    | a |\nAnd a document\n    """\n    And not a step\n    """\n// comment\nCustomer = [Customer]\n' };
+    for (const line of [1, 3]) { assert.equal(isExecutableVanessaFragmentLine({ ...source, line }), true); }
+    for (const line of [0, 2, 4, 5, 6, 7, 8, 9, -1, 1.1, 80]) { assert.equal(isExecutableVanessaFragmentLine({ ...source, line }), false); }
+    assert.equal(isExecutableVanessaFragmentLine({ ...source, line: 1, uri: 'untitled:scen.feature' }), false);
+    assert.equal(isExecutableVanessaFragmentLine({ ...source, line: 1, uri: 'file:///KOT/own.feature' }), false);
 });
 
 test('Vanessa control-flow lines and compact tree groups are executable native feature targets', async () => {

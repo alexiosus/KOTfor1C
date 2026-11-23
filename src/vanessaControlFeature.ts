@@ -2,6 +2,7 @@ import { getGherkinStepAnnotationTarget } from './gherkinAnnotations';
 import { collectGherkinSyntaxErrors } from './gherkinSyntaxValidator.js';
 import { parseStandaloneFeatureSource } from './standaloneFeatureModel';
 import { nativeDocumentTextMatchesFileText } from './scenarioNativeDocumentSnapshot';
+import { parseCompilerParameterBinding, scanCompilerLines } from './scenarioCompilerSyntax';
 
 export interface VanessaFeatureDocument {
     readonly uri: string; readonly filePath: string; readonly text: string; readonly dirty: boolean; readonly version: number; readonly line: number;
@@ -32,6 +33,14 @@ export async function prepareSavedVanessaFeature(source: VanessaFeatureDocument,
 export function isExecutableFeatureLine(source: VanessaFeatureDocument, line: number): boolean {
     if (!source.uri.startsWith('file:') || !/\.feature$/iu.test(source.uri) || !Number.isSafeInteger(line) || line < 0) { return false; }
     return !!getGherkinStepAnnotationTarget({ ...source, language: parseStandaloneFeatureSource(source.text, '').language }, line);
+}
+
+/** Syntactic F11 availability; the trial command also confirms adjacent SPPR metadata. */
+export function isExecutableVanessaFragmentLine(source: VanessaFeatureDocument): boolean {
+    if (!source.uri.startsWith('file:') || !/\/scen\.feature$/iu.test(source.uri) || !Number.isSafeInteger(source.line)) { return false; }
+    const lines = source.text.split(/\r\n|\r|\n/u);
+    const line = lines[source.line];
+    return !!line?.trim() && scanCompilerLines(lines)[source.line].kind === 'code' && !parseCompilerParameterBinding(line);
 }
 
 /** Vanessa runFromLine accepts a step inside a tree group, not its heading. */

@@ -11,10 +11,11 @@ import { nativeDocumentTextMatchesFileText } from './scenarioNativeDocumentSnaps
 import { sameVanessaFeaturePath, type VanessaControlFailure, type VanessaControlSession } from './vanessaControlSession';
 import type { VanessaFeatureDocument } from './vanessaControlFeature';
 import { VanessaExecutionHighlighter } from './vanessaControlHighlighting';
+import { readNativeScenarioMetadata } from './spprScenarioFiles';
 
 const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
-/** Runtime fragments never replace the user's native YAML document. */
+/** Runtime fragments never replace the user's scenario document. */
 export function registerVanessaYamlTrialCommand(context: vscode.ExtensionContext, session: VanessaControlSession,
     getDefinitions: (uri: vscode.Uri) => Promise<ProjectDefinitionView>, ensureConnected: () => Promise<boolean> = async () => true,
     failureHover?: (failure: VanessaControlFailure, document: vscode.TextDocument) => vscode.MarkdownString | undefined): {
@@ -53,7 +54,13 @@ export function registerVanessaYamlTrialCommand(context: vscode.ExtensionContext
     const ports: VanessaYamlTrialPorts = { current,
         save: async () => !!await vscode.window.activeTextEditor?.document.save(),
         readText: file => fs.readFile(file, 'utf8'),
-        getDefinitions: source => getDefinitions(vscode.Uri.parse(source.uri)),
+        getDefinitions: async source => {
+            const uri = vscode.Uri.parse(source.uri);
+            if (/\/scen\.feature$/iu.test(source.uri) && !await readNativeScenarioMetadata(uri)) {
+                throw new Error('Select a step in a saved SPPR scen.feature with meta.yaml.');
+            }
+            return getDefinitions(uri);
+        },
         defaultLanguage: () => getConfiguredScenarioLanguage(),
         materialize: async trial => {
             if (disposed) { throw new Error('Vanessa step control has been closed.'); }
@@ -95,7 +102,7 @@ export function registerVanessaYamlTrialCommand(context: vscode.ExtensionContext
                 if (!requested || active?.uri !== requested.uri || active.text !== requested.text || active.line !== requested.line) {
                     throw new Error('The active source or selection changed while connecting to Vanessa. Run the command again.');
                 }
-                await kotUi.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Vanessa: try YAML step') }, () => control.run());
+                await kotUi.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Vanessa: execute one step') }, () => control.run());
             }
             catch (error) { void kotUi.showErrorMessage(error instanceof Error ? vscode.l10n.t(error.message) : vscode.l10n.t('Vanessa MCP command failed.')); }
         }),

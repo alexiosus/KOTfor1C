@@ -8,10 +8,11 @@ import os from 'node:os';
 import * as feature from '../src/vanessaControlFeature';
 import * as yaml from '../src/vanessaControlYaml';
 
-test('feature control keeps the visible native source when Properties has focus and honors an explicit context-menu URI', async t => {
+for (const name of ['own.feature', 'scen.feature']) {
+test(`${name} control keeps the visible native source when Properties has focus and honors an explicit context-menu URI`, async t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-feature-context-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-    const file = path.join(root, 'own.feature'); const text = 'Feature: Own\nScenario: Own\n    And Delay 1\n';
+    const file = path.join(root, name); const text = 'Feature: Own\nScenario: Own\n    And Delay 1\n';
     fs.writeFileSync(file, text);
     const uri = { scheme: 'file', toString: () => new URL(`file://${file}`).toString(), fsPath: file };
     const editor = { document: { uri, version: 1, isDirty: false, lineCount: 4, getText: () => text }, selection: { active: { line: 2 } } };
@@ -40,12 +41,15 @@ test('feature control keeps the visible native source when Properties has focus 
     await handlers.get('kotTestToolkit.vanessaControl.oneStep')!(uri);
     assert.deepEqual(errors, []); assert.deepEqual(calls, [['oneStep', file, 3], ['oneStep', file, 3]]);
 });
+}
 
-test('YAML F11 uses a direct step trial even when a compiled map exists; compiled execution is explicit', async () => {
-    const handlers = new Map<string, () => Promise<void>>(); const invoked: string[] = []; const compiled: string[] = [];
-    const text = 'ТипФайла: "Сценарий"\nТекстСценария: |\n    And Delay "1"\n';
-    const editor = { document: { uri: { toString: () => 'file:///scen.yaml', fsPath: '/scen.yaml' }, version: 1, isDirty: false,
-        lineCount: 4, getText: () => text }, selection: { active: { line: 2 } } };
+for (const native of [false, true]) {
+test(`${native ? 'native SPPR feature' : 'YAML'} F11 uses a direct step trial even when a compiled map exists; compiled execution is explicit`, async () => {
+    const handlers = new Map<string, () => Promise<void>>(); const invoked: string[] = []; const compiled: string[] = []; const contexts: unknown[][] = [];
+    const text = native ? '#language: en\nAnd Delay "1"\n' : 'ТипФайла: "Сценарий"\nТекстСценария: |\n    And Delay "1"\n';
+    const file = native ? '/scen.feature' : '/scen.yaml';
+    const editor = { document: { uri: { toString: () => 'file://' + file, fsPath: file }, version: 1, isDirty: false,
+        lineCount: text.split('\n').length, getText: () => text }, selection: { active: { line: native ? 1 : 2 } } };
     const noop = () => ({ dispose() {} });
     const module = { exports: {} as Record<string, unknown> };
     const vscode = { l10n: { t: (text: string) => text }, ProgressLocation: { Notification: 1 },
@@ -54,7 +58,7 @@ test('YAML F11 uses a direct step trial even when a compiled map exists; compile
         workspace: { onDidChangeTextDocument: noop },
         debug: { onDidStartDebugSession: noop, onDidTerminateDebugSession: noop },
         commands: { registerCommand: (name: string, handler: () => Promise<void>) => { handlers.set(name, handler); return noop(); },
-            executeCommand: async (name: string) => { if (name !== 'setContext') { invoked.push(name); } } } };
+            executeCommand: async (name: string, ...args: unknown[]) => { if (name === 'setContext') { contexts.push(args); } else { invoked.push(name); } } } };
     const ts = require('typescript') as typeof import('typescript');
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join('src', 'vanessaControlCommands.ts'), 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText,
@@ -70,11 +74,15 @@ test('YAML F11 uses a direct step trial even when a compiled map exists; compile
     register({ subscriptions: [] }, { snapshot: { status: 'ready', capabilities: { oneStep: { supported: true },
         editorContent: { supported: true }, openFeature: { supported: true } } }, onDidChange: noop },
     { run: async (mode: string) => { compiled.push(mode); } });
+    assert.deepEqual(contexts, [['kotTestToolkit.vanessaControlCanStep', true]]);
     await handlers.get('kotTestToolkit.vanessaControl.oneStep')!();
     assert.deepEqual(invoked, ['kotTestToolkit.vanessaControl.tryYamlStep']); assert.deepEqual(compiled, []);
-    const explicit = handlers.get('kotTestToolkit.vanessaControl.oneCompiledStep'); assert.ok(explicit);
-    await explicit(); assert.deepEqual(compiled, ['oneStep']);
+    if (!native) {
+        const explicit = handlers.get('kotTestToolkit.vanessaControl.oneCompiledStep'); assert.ok(explicit);
+        await explicit(); assert.deepEqual(compiled, ['oneStep']);
+    }
 });
+}
 
 test('a late failed-step error updates its hover without repainting unrelated failed lines with that error', () => {
     const noop = () => ({ dispose() {} }); const painted: any[][] = []; let update!: () => void;
