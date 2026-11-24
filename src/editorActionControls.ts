@@ -9,7 +9,7 @@ export function editorActionsAreEnabled(uri: string, config: Pick<vscode.Workspa
     const value = config.inspect<boolean>(key);
     const explicit = value && [value.workspaceFolderLanguageValue, value.workspaceLanguageValue, value.globalLanguageValue,
         value.workspaceFolderValue, value.workspaceValue, value.globalValue].some(entry => entry !== undefined);
-    return config.get<boolean>(explicit ? key : 'editor.showActionButtons', false);
+    return config.get<boolean>(explicit ? key : 'editor.showActionButtons', true);
 }
 
 function combinedChanges(first: vscode.Event<void>, second?: vscode.Event<void>): vscode.Event<void> {

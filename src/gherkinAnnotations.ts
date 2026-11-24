@@ -143,6 +143,17 @@ export function collectGherkinExecutableLines(source: GherkinAnnotationSource): 
     return view ? view.lines.filter(line => !line.payload && isBodyTarget(view, line)).map(line => ({ lineNumber: line.number + 1, text: line.text.trim() })) : [];
 }
 
+/** A saved feature selection must stay in one scenario or Background. */
+export function getGherkinSelectionFirstStep(source: GherkinAnnotationSource, start: number, end: number): number | undefined {
+    const view = scan(source);
+    if (!view || view.yaml) { return undefined; }
+    const selected = view.lines.slice(start, end + 1);
+    if (selected.some(line => !line.payload && line.text.trim() && !/^[ \t]*\|/u.test(line.text) &&
+        (line.kind ? line.kind !== 'step' && line.kind !== 'group' : !isAnnotation(line.text)))) { return undefined; }
+    const first = selected.find(line => line.kind === 'step' || line.kind === 'group');
+    return first && isBodyTarget(view, first) && selected.some(line => line.kind === 'step' && !/^\s*\*/u.test(line.text)) ? first.number : undefined;
+}
+
 /** Only standalone tag tokens are indexed; comments, step annotations and metadata values are excluded. */
 export function collectGherkinProjectTags(source: GherkinAnnotationSource): readonly string[] {
     const view = scan(source);

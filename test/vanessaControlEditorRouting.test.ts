@@ -7,18 +7,21 @@ import vm from 'node:vm';
 import os from 'node:os';
 import * as feature from '../src/vanessaControlFeature';
 import * as yaml from '../src/vanessaControlYaml';
+import * as lease from '../src/vanessaControlLease';
 
-test('feature control keeps the visible native source when Properties has focus and honors an explicit context-menu URI', async t => {
+for (const name of ['own.feature', 'scen.feature']) {
+test(`${name} control keeps the visible native source when Properties has focus and honors an explicit context-menu URI`, async t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-feature-context-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-    const file = path.join(root, 'own.feature'); const text = 'Feature: Own\nScenario: Own\n    And Delay 1\n';
+    const file = path.join(root, name); const text = 'Feature: Own\nScenario: Own\n    And Delay 1\nScenario: Other\n    And Delay 2\n';
     fs.writeFileSync(file, text);
     const uri = { scheme: 'file', toString: () => new URL(`file://${file}`).toString(), fsPath: file };
-    const editor = { document: { uri, version: 1, isDirty: false, lineCount: 4, getText: () => text }, selection: { active: { line: 2 } } };
+    const editor = { document: { uri, version: 1, isDirty: false, lineCount: 6, getText: () => text }, selection: { active: { line: 2 } } };
     const other = { ...editor, document: { ...editor.document, uri: { scheme: 'file', toString: () => 'file:///other.yaml', fsPath: '/other.yaml' } } };
     const handlers = new Map<string, (...args: unknown[]) => Promise<void>>(); const calls: unknown[][] = []; const errors: string[] = [];
     const noop = () => ({ dispose() {} });
     const vscode = { l10n: { t: (value: string) => value }, ProgressLocation: { Notification: 1 },
+        Selection: class { active: { line: number }; constructor(line: number) { this.active = { line }; } },
         window: { activeTextEditor: editor as typeof editor | undefined, visibleTextEditors: [editor, other],
             onDidChangeActiveTextEditor: noop, onDidChangeTextEditorSelection: noop, onDidChangeVisibleTextEditors: noop,
             showErrorMessage: (value: string) => { errors.push(value); }, showInformationMessage: noop,
@@ -29,8 +32,10 @@ test('feature control keeps the visible native source when Properties has focus 
     const module = { exports: {} as any }; const ts = require('typescript');
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/vanessaControlCommands.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText,
         { module, exports: module.exports, Error, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === 'vscode' ? vscode : name.endsWith('Highlighting')
-            ? { VanessaExecutionHighlighter: class { render() {} } } : name.endsWith('Feature') ? feature : name.endsWith('Yaml') ? yaml : require(name)) });
-    const session = { snapshot: { status: 'ready', capabilities: { oneStep: { supported: true }, editorContent: { supported: true }, openFeature: { supported: true } } },
+            ? { VanessaExecutionHighlighter: class { render() {} } } : name.endsWith('Feature') ? feature : name.endsWith('Yaml') ? yaml
+                : name.endsWith('Lease') ? lease : require(name)) });
+    const session = { snapshot: { status: 'ready', capabilities: { oneStep: { supported: true }, editorContent: { supported: true }, openFeature: { supported: true },
+        breakpoints: { supported: false } } },
         onDidChange: noop, run: async (...args: unknown[]) => { calls.push(args.slice(0, 3)); } };
     module.exports.registerVanessaControlCommands({ subscriptions: [], workspaceState: { get: () => true } }, session);
     vscode.window.activeTextEditor = undefined;
@@ -39,13 +44,27 @@ test('feature control keeps the visible native source when Properties has focus 
     vscode.window.activeTextEditor = other;
     await handlers.get('kotTestToolkit.vanessaControl.oneStep')!(uri);
     assert.deepEqual(errors, []); assert.deepEqual(calls, [['oneStep', file, 3], ['oneStep', file, 3]]);
+    editor.selection.active.line = 1;
+    const runScenario = handlers.get('kotTestToolkit.vanessaControl.runScenario')!;
+    await runScenario();
+    assert.deepEqual(errors, []); assert.deepEqual(calls.at(-1), ['runScenario', file, 3]);
+    await runScenario(uri, { line: 3, version: editor.document.version });
+    assert.deepEqual(errors, []); assert.deepEqual(calls.at(-1), ['runScenario', file, 5]);
+    assert.equal(calls.length, 4);
+    editor.document.version++;
+    await runScenario(uri, { line: 1, version: editor.document.version - 1 });
+    assert.match(errors[0], /feature changed/u);
+    assert.equal(calls.length, 4);
 });
+}
 
-test('YAML F11 uses a direct step trial even when a compiled map exists; compiled execution is explicit', async () => {
-    const handlers = new Map<string, () => Promise<void>>(); const invoked: string[] = []; const compiled: string[] = [];
-    const text = 'ТипФайла: "Сценарий"\nТекстСценария: |\n    And Delay "1"\n';
-    const editor = { document: { uri: { toString: () => 'file:///scen.yaml', fsPath: '/scen.yaml' }, version: 1, isDirty: false,
-        lineCount: 4, getText: () => text }, selection: { active: { line: 2 } } };
+for (const native of [false, true]) {
+test(`${native ? 'native SPPR feature' : 'YAML'} F11 uses a direct step trial even when a compiled map exists; compiled execution is explicit`, async () => {
+    const handlers = new Map<string, () => Promise<void>>(); const invoked: string[] = []; const compiled: string[] = []; const contexts: unknown[][] = [];
+    const text = native ? '#language: en\nAnd Delay "1"\n' : 'ТипФайла: "Сценарий"\nТекстСценария: |\n    And Delay "1"\n';
+    const file = native ? '/scen.feature' : '/scen.yaml';
+    const editor = { document: { uri: { toString: () => 'file://' + file, fsPath: file }, version: 1, isDirty: false,
+        lineCount: text.split('\n').length, getText: () => text }, selection: { active: { line: native ? 1 : 2 } } };
     const noop = () => ({ dispose() {} });
     const module = { exports: {} as Record<string, unknown> };
     const vscode = { l10n: { t: (text: string) => text }, ProgressLocation: { Notification: 1 },
@@ -54,7 +73,7 @@ test('YAML F11 uses a direct step trial even when a compiled map exists; compile
         workspace: { onDidChangeTextDocument: noop },
         debug: { onDidStartDebugSession: noop, onDidTerminateDebugSession: noop },
         commands: { registerCommand: (name: string, handler: () => Promise<void>) => { handlers.set(name, handler); return noop(); },
-            executeCommand: async (name: string) => { if (name !== 'setContext') { invoked.push(name); } } } };
+            executeCommand: async (name: string, ...args: unknown[]) => { if (name === 'setContext') { contexts.push(args); } else { invoked.push(name); } } } };
     const ts = require('typescript') as typeof import('typescript');
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join('src', 'vanessaControlCommands.ts'), 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText,
@@ -63,6 +82,7 @@ test('YAML F11 uses a direct step trial even when a compiled map exists; compile
         if (name === 'vscode') { return vscode; }
         if (name === './vanessaControlFeature') { return feature; }
         if (name === './vanessaControlYaml') { return yaml; }
+        if (name === './vanessaControlLease') { return lease; }
         if (name === './vanessaControlHighlighting') { return { VanessaExecutionHighlighter: class { render() {} } }; }
         return require(name);
     } });
@@ -70,11 +90,15 @@ test('YAML F11 uses a direct step trial even when a compiled map exists; compile
     register({ subscriptions: [] }, { snapshot: { status: 'ready', capabilities: { oneStep: { supported: true },
         editorContent: { supported: true }, openFeature: { supported: true } } }, onDidChange: noop },
     { run: async (mode: string) => { compiled.push(mode); } });
+    assert.deepEqual(contexts, [['kotTestToolkit.vanessaControlCanStep', true]]);
     await handlers.get('kotTestToolkit.vanessaControl.oneStep')!();
     assert.deepEqual(invoked, ['kotTestToolkit.vanessaControl.tryYamlStep']); assert.deepEqual(compiled, []);
-    const explicit = handlers.get('kotTestToolkit.vanessaControl.oneCompiledStep'); assert.ok(explicit);
-    await explicit(); assert.deepEqual(compiled, ['oneStep']);
+    if (!native) {
+        const explicit = handlers.get('kotTestToolkit.vanessaControl.oneCompiledStep'); assert.ok(explicit);
+        await explicit(); assert.deepEqual(compiled, ['oneStep']);
+    }
 });
+}
 
 test('a late failed-step error updates its hover without repainting unrelated failed lines with that error', () => {
     const noop = () => ({ dispose() {} }); const painted: any[][] = []; let update!: () => void;
@@ -92,7 +116,7 @@ test('a late failed-step error updates its hover without repainting unrelated fa
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/vanessaControlCommands.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
         { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === 'vscode' ? vscode : name.endsWith('Highlighting')
             ? { VanessaExecutionHighlighter: class { render() {} renderMany(_editor: unknown, lines: any[]) { painted.push(lines); } } }
-            : name.endsWith('Feature') ? feature : yaml) });
+            : name.endsWith('Feature') ? feature : name.endsWith('Lease') ? lease : yaml) });
     module.exports.registerVanessaControlCommands({ subscriptions: [] }, session, undefined, undefined, undefined,
         (failure: any) => ({ value: 'Rich failure: ' + failure.message + (failure.details ?? '') }));
     assert.equal(painted.length, 1);

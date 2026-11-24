@@ -1,18 +1,87 @@
 import { execFile } from 'node:child_process';
 import { normalizeVanessaControlEndpoint } from './vanessaControlProtocol';
 
-export function parseLocalOneCListeningPorts(output: string): number[] {
-    return [...new Set(output.split(/\r?\n/u).filter(line => /^\s*\d{1,5}\s*$/u.test(line)).map(Number)
-        .filter(port => Number.isSafeInteger(port) && port > 0 && port <= 65535))].slice(0, 32);
+export interface LocalOneCListener {
+    readonly host: '127.0.0.1' | '::1';
+    readonly port: number;
+    readonly pid: number;
+    readonly title: string;
+}
+
+export function parseLocalOneCListeners(output: string): LocalOneCListener[] {
+    try {
+        const data: unknown = JSON.parse(output);
+        if (!Array.isArray(data)) { return []; }
+        return data.flatMap((row: Partial<LocalOneCListener> | null) => {
+            if (!row || (row.host !== '127.0.0.1' && row.host !== '::1') || typeof row.port !== 'number' ||
+                !Number.isInteger(row.port) || row.port < 1 || row.port > 65535 || typeof row.pid !== 'number' ||
+                !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.title !== 'string') { return []; }
+            return [{ host: row.host, port: row.port, pid: row.pid, title: row.title.replace(/[\r\n]/gu, ' ').trim().slice(0, 200) }];
+        }).slice(0, 64);
+    } catch { return []; }
+}
+
+function loopbackEndpoint(endpoint: string): { host: string; port: number } | undefined {
+    try {
+        const url = new URL(normalizeVanessaControlEndpoint(endpoint));
+        return { host: url.hostname.replace(/^\[|\]$/gu, ''), port: Number(url.port || (url.protocol === 'https:' ? 443 : 80)) };
+    } catch { return undefined; }
+}
+
+export function localOneCListener(endpoint: string, listeners: readonly LocalOneCListener[]): LocalOneCListener | undefined {
+    const address = loopbackEndpoint(endpoint);
+    if (!address) { return undefined; }
+    const matches = listeners.filter(listener => listener.port === address.port && (address.host === 'localhost' || listener.host === address.host));
+    return matches.length && matches.every(listener => listener.pid === matches[0].pid) ? matches[0] : undefined;
 }
 
 /** Read only loopback listeners owned by 1C; no process command lines or credentials. */
-export async function localOneCListeningPorts(): Promise<readonly number[]> {
+export async function localOneCListeners(): Promise<readonly LocalOneCListener[]> {
     if (process.platform !== 'win32') { return []; }
-    const script = "$kotProcessIds = @(Get-Process -Name 1cv8,1cv8c -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id); Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $kotProcessIds -contains $_.OwningProcess -and $_.LocalAddress -in @('127.0.0.1','::1') } | Select-Object -ExpandProperty LocalPort -Unique";
+    const script = `
+        [Console]::OutputEncoding = [Text.Encoding]::UTF8
+        $kotManagers = @{}
+        Get-Process -Name 1cv8,1cv8c -ErrorAction SilentlyContinue | ForEach-Object { $kotManagers[[int]$_.Id] = $_ }
+        if ($kotManagers.Count -eq 0) { '[]'; return }
+        $kotListeners = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+            Where-Object { $kotManagers.ContainsKey([int]$_.OwningProcess) -and $_.LocalAddress -in @('127.0.0.1','::1') } |
+            Select-Object -First 64 | ForEach-Object {
+                @{
+                    host = $_.LocalAddress
+                    port = [int]$_.LocalPort
+                    pid = [int]$_.OwningProcess
+                    title = [string]$kotManagers[[int]$_.OwningProcess].MainWindowTitle
+                }
+            })
+        ConvertTo-Json -InputObject $kotListeners -Compress
+    `.trim();
     return new Promise(resolve => {
-        execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 2_000, maxBuffer: 64 * 1024 },
-            (error, stdout) => resolve(error ? [] : parseLocalOneCListeningPorts(stdout)));
+        execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 5_000, maxBuffer: 64 * 1024 },
+            (error, stdout) => resolve(error ? [] : parseLocalOneCListeners(stdout)));
+    });
+}
+
+export function canShowLocalVanessaWindow(endpoint: string): boolean {
+    return process.platform === 'win32' && !!loopbackEndpoint(endpoint);
+}
+
+export async function showLocalVanessaWindow(endpoint: string): Promise<boolean> {
+    const address = loopbackEndpoint(endpoint);
+    if (process.platform !== 'win32' || !address) { return false; }
+    const addresses = address.host === 'localhost' ? "'127.0.0.1','::1'" : `'${address.host}'`;
+    // Resolve the listening process again at click time, never focus a cached PID or match a shared window title.
+    const script = `
+        $kotListeners = @(Get-NetTCPConnection -State Listen -LocalPort ${address.port} -ErrorAction SilentlyContinue |
+            Where-Object { $_.LocalAddress -in @(${addresses}) } | Select-Object -ExpandProperty OwningProcess -Unique)
+        if ($kotListeners.Count -ne 1) { return }
+        $kotManager = Get-Process -Id $kotListeners[0] -ErrorAction SilentlyContinue
+        if ($kotManager.ProcessName -in @('1cv8','1cv8c') -and $kotManager.MainWindowHandle -ne 0) {
+            (New-Object -ComObject WScript.Shell).AppActivate([int]$kotManager.Id)
+        }
+    `.trim();
+    return new Promise(resolve => {
+        execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 5_000, maxBuffer: 1024 },
+            (error, stdout) => resolve(!error && stdout.trim().toLowerCase() === 'true'));
     });
 }
 

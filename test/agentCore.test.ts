@@ -13,7 +13,7 @@ import { renderAgentReport } from '../src/agentReport';
 import { agentTools, validateAgentArguments } from '../src/agentTools';
 import { mapAgentNativeLine, mapAgentNativeFailure } from '../src/agentNativeSources';
 import { resolveVanessaStepLine } from '../src/vanessaControlFeature';
-import { acquireAgentControl } from '../src/agentControl';
+import { acquireVanessaControl, VanessaControlBusyError } from '../src/vanessaControlLease';
 import { agentClientTemplate, agentLaunchLocale, agentProjectDirectory, prepareAgentProjectDirectory } from '../src/agentClient';
 import type { VanessaSettingsReply } from '../src/vanessaControlSettings';
 
@@ -99,12 +99,12 @@ test('regional launch repair preserves authentication and quoted command text, r
 });
 
 test('control waits for a local lease but never replays an entered action or waits on another test run', async () => {
-    const busy = () => new Error('Vanessa is busy. Stop or wait for the current operation.'); let attempts = 0;
-    assert.equal(await acquireAgentControl(async entered => { if (++attempts === 1) { throw busy(); } entered(); return 'ready'; }, () => false), 'ready');
+    const busy = () => new VanessaControlBusyError(); let attempts = 0;
+    assert.equal(await acquireVanessaControl(async entered => { if (++attempts === 1) { throw busy(); } entered(); return 'ready'; }, () => false), 'ready');
     assert.equal(attempts, 2); attempts = 0;
-    await assert.rejects(acquireAgentControl(async entered => { attempts++; entered(); throw busy(); }, () => false), /busy/);
+    await assert.rejects(acquireVanessaControl(async entered => { attempts++; entered(); throw busy(); }, () => false), /busy/);
     assert.equal(attempts, 1);
-    await assert.rejects(acquireAgentControl(async () => { throw busy(); }, () => true), /busy/);
+    await assert.rejects(acquireVanessaControl(async () => { throw busy(); }, () => true), /busy/);
 });
 
 test('the authored client template preserves its test profile name and local credentials without retaining the original base', () => {

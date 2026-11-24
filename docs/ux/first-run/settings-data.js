@@ -171,7 +171,7 @@ window.KOT_SETTINGS_MODEL = {
       "section": "editor",
       "advanced": true,
       "type": "boolean",
-      "default": false,
+      "default": true,
       "description": "Показывать кнопки действий KOT в редакторе YAML и feature: настройки запуска, группы, блоки и метаданные.",
       "preferredScope": "user",
       "hint": "Задаёт показ кнопок, пока для YAML или feature не выбрано отдельное значение. Оставлен для существующих настроек; обычно достаточно двух переключателей выше.",
@@ -183,7 +183,7 @@ window.KOT_SETTINGS_MODEL = {
       "section": "editor",
       "advanced": false,
       "type": "boolean",
-      "default": false,
+      "default": true,
       "description": "Показывать кнопки действий в YAML. Явное значение заменяет прежнюю общую настройку кнопок.",
       "preferredScope": "user",
       "hint": "Можно использовать общую настройку кнопок или отдельно выбрать показ для этого формата.",
@@ -195,7 +195,7 @@ window.KOT_SETTINGS_MODEL = {
       "section": "editor",
       "advanced": false,
       "type": "boolean",
-      "default": false,
+      "default": true,
       "description": "Показывать кнопки действий в feature. Явное значение заменяет прежнюю общую настройку кнопок.",
       "preferredScope": "user",
       "hint": "Можно использовать общую настройку кнопок или отдельно выбрать показ для этого формата.",
@@ -699,6 +699,31 @@ window.KOT_SETTINGS_MODEL = {
       "optionLabels": [
         "Запускать отдельный процесс",
         "Управлять открытой Vanessa (MCP)"
+      ]
+    },
+    {
+      "key": "kotTestToolkit.runVanessa.interfaceLanguage",
+      "label": "Язык интерфейса Vanessa Automation",
+      "section": "vanessa",
+      "advanced": false,
+      "type": "string",
+      "default": "inherit",
+      "description": "Язык интерфейса Vanessa Automation для новых сеансов встроенного запуска KOT. Значение `inherit` использует текущий язык пользователя служебной базы. Выбор языка сохраняет его в профиле этого пользователя.",
+      "preferredScope": "user",
+      "enum": [
+        "inherit",
+        "ru",
+        "en"
+      ],
+      "optionLabels": [
+        "Из профиля служебного пользователя",
+        "Русский",
+        "Английский"
+      ],
+      "optionLabelsEn": [
+        "From the service user profile",
+        "Russian",
+        "English"
       ]
     },
     {

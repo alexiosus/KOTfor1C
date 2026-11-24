@@ -43,6 +43,23 @@ function loadService(): typeof CatalogService {
 }
 
 const StandaloneFeatureService = loadService();
+
+test('standalone discovery still publishes features and their groups with duplicate scenario metadata on disk', async t => {
+    const h = await harness(t);
+    const feature = await h.write('available.feature');
+    const store = new projectLibraryStore.ProjectLibraryStore(h.root());
+    const group = await store.ensureGroup('Smoke', 'standalone');
+    await store.setMetadata({ kind: 'feature', relativePath: 'available.feature' }, { groupId: group.id });
+    const document = 'version: 2\nidentity:\n  kind: scenario\n  uid: copied\nmetadata: {}\n';
+    const first = await h.write('a/scen.yaml.kot.yml', document);
+    const second = await h.write('b/scen.yaml.kot.yml', document);
+    const snapshot = await h.createService().ensureReady();
+    assert.deepEqual(snapshot.features.map(item => item.id), [featureUri(feature).href]);
+    assert.equal(snapshot.features[0].groupId, group.id);
+    assert.ok(h.logs.some(message => message.includes('Duplicate metadata UID') && message.includes(first) && message.includes(second)));
+    assert.deepEqual(await Promise.all([fs.readFile(first, 'utf8'), fs.readFile(second, 'utf8')]), [document, document]);
+});
+
 async function groupsText(root: string): Promise<string> {
     return JSON.stringify(await Promise.all((await fs.readdir(path.join(root, '.kot/groups'))).sort().map(name => fs.readFile(path.join(root, '.kot/groups', name), 'utf8'))));
 }

@@ -31,12 +31,12 @@ function withoutIndentation(text: string, columns: number): string {
 
 /** A literal ordinary step only; compiler semantics must go through a certified build. */
 export function prepareVanessaYamlTrial(source: VanessaFeatureDocument, definitions: ProjectDefinitionView, defaultLanguage: 'en' | 'ru' = 'en'): VanessaYamlTrial {
-    const document = ScenarioYamlDocument.parse(source.text);
-    const body = getCompilerScenarioBody(source.text);
+    const native = /\/scen\.feature$/iu.test(source.uri);
+    const body = native ? { startLine: 0, lines: source.text.split(/\r\n|\r|\n/u) } : getCompilerScenarioBody(source.text);
     const line = body ? source.line - body.startLine : -1;
     const header = body ? source.text.split(/\r\n|\r|\n/u)[body.startLine - 1] : '';
-    if (!source.uri.startsWith('file:') || !/\.yaml$/iu.test(source.uri) || document.errors.length || !body || !Number.isSafeInteger(line) ||
-        line < 0 || line >= body.lines.length || !/:\s*\|[+-]?\s*(?:#.*)?$/u.test(header)) {
+    if (!source.uri.startsWith('file:') || !body || !Number.isSafeInteger(line) || line < 0 || line >= body.lines.length ||
+        !native && (!/\.yaml$/iu.test(source.uri) || ScenarioYamlDocument.parse(source.text).errors.length || !/:\s*\|[+-]?\s*(?:#.*)?$/u.test(header))) {
         throw new Error('Select a step in a saved YAML literal scenario text block.');
     }
     const scanned = scanCompilerLines(body.lines);
@@ -53,10 +53,10 @@ export function prepareVanessaYamlTrial(source: VanessaFeatureDocument, definiti
     const languageTags = body.lines.flatMap((text, index) => scanned[index].kind === 'comment'
         ? [...text.trim().matchAll(/^#\s*language\s*:\s*(\S+)\s*$/giu)].map(match => match[1].toLowerCase()) : []);
     const language = languageTags[0] ?? defaultLanguage;
-    if (!['en', 'ru'].includes(language) || languageTags.some(value => value !== language)) { throw new Error('The YAML language must be unambiguously en or ru for a step trial.'); }
+    if (!['en', 'ru'].includes(language) || languageTags.some(value => value !== language)) { throw new Error('The scenario language must be unambiguously en or ru for a step trial.'); }
     const step = body.lines[line].trim();
     const prefix = language === 'en' ? /^(?:And|Given|When|Then|But)\s+\S/iu : /^(?:И|Дано|Затем|Пусть|То|А|Также|Иначе|Допустим|Когда|Тогда|Но|К тому же)\s+\S/iu;
-    if (!prefix.test(step)) { throw new Error('The selected step does not match the YAML language.'); }
+    if (!prefix.test(step)) { throw new Error('The selected step does not match the scenario language.'); }
     let end = line + 1;
     while (end < body.lines.length && ['docString', 'table'].includes(scanned[end].kind)) { end++; }
     const lines = body.lines.slice(line, end);
@@ -64,7 +64,7 @@ export function prepareVanessaYamlTrial(source: VanessaFeatureDocument, definiti
         throw new Error('Parameter substitution requires a compiler build before a step trial.');
     }
     if (!definitions.all.some(definition => definition.kind === 'builtInStep')) {
-        throw new Error('The Vanessa step catalog is unavailable. Check the configured Vanessa version and refresh its step catalog before trying a YAML step.');
+        throw new Error('The Vanessa step catalog is unavailable. Check the configured Vanessa version and refresh its step catalog before trying a step.');
     }
     const resolution = resolveProjectInvocation(definitions, step);
     if (resolution.kind !== 'unique' || resolution.match.definition.kind !== 'builtInStep') {
@@ -102,13 +102,13 @@ export class VanessaYamlTrialControl {
     async run(): Promise<void> {
         if (this.busy) { throw new Error('Vanessa is busy. Wait for the current command.'); }
         const source = this.ports.current();
-        if (!source) { throw new Error('Select a step in a saved YAML scenario.'); }
+        if (!source) { throw new Error('Select a step in a saved scenario.'); }
         this.busy = true;
         const isCurrent = () => { const active = this.ports.current(); return active?.uri === source.uri && active.text === source.text && !active.dirty && active.line === source.line; };
-        const assertCurrent = () => { if (!isCurrent()) { throw new Error('The active YAML source or selection changed. Run the command again.'); } };
+        const assertCurrent = () => { if (!isCurrent()) { throw new Error('The active scenario source or selection changed. Run the command again.'); } };
         try {
-            if (source.dirty && !await this.ports.save()) { throw new Error('Save the YAML source before trying a step.'); }
-            if (!nativeDocumentTextMatchesFileText(source.text, await this.ports.readText(source.filePath))) { throw new Error('The YAML source changed on disk. Reopen it before trying a step.'); }
+            if (source.dirty && !await this.ports.save()) { throw new Error('Save the scenario source before trying a step.'); }
+            if (!nativeDocumentTextMatchesFileText(source.text, await this.ports.readText(source.filePath))) { throw new Error('The scenario source changed on disk. Reopen it before trying a step.'); }
             assertCurrent();
             const definitions = await this.ports.getDefinitions(source); assertCurrent();
             const trial = prepareVanessaYamlTrial(source, definitions, this.ports.defaultLanguage?.());

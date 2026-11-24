@@ -94,6 +94,29 @@ test('infobase action menus stay within the content panel when their button wrap
     }
 });
 
+test('the Vanessa launch button appears with the first client and disappears with the last one', () => {
+    let hidden = true;
+    const state = { clientFocusRequest: 0, vanessaClients: { rows: [] as unknown[] } };
+    const render = runFunction(read('media/infobaseManager.js'), 'renderDetails', 'renderStatus', {
+        refs: { startVanessaAction: { classList: { toggle: (_name: string, value: boolean) => { hidden = value; } } } },
+        state, lastDetailsSignature: undefined, lastClientFocusRequest: 0, clientPanel: null,
+        getSelectedInfobase: () => ({ infobasePath: '/demo' }),
+        HTMLElement: class {}, HTMLButtonElement: class {},
+        document: { querySelector: () => null, querySelectorAll: () => [] },
+        resolveEffectiveLaunchPlatform: () => null, formatPlatformButtonLabel: () => '',
+        renderLaunchPlatformMenu() {}, syncTechnicalSection() {}
+    });
+
+    render();
+    assert.equal(hidden, true);
+    state.vanessaClients.rows = [{ id: 'tester' }];
+    render();
+    assert.equal(hidden, false);
+    state.vanessaClients.rows = [];
+    render();
+    assert.equal(hidden, true);
+});
+
 test('infobase list rows omit activity and registration status while keeping path, state and hidden status', () => {
     const refs = { infobaseList: { innerHTML: '' } };
     class Element { static [Symbol.hasInstance](value: unknown) { return Boolean(value); } }

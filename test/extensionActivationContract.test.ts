@@ -206,7 +206,7 @@ test('activation shares step-library services between compact and full views', (
     assert.equal(source.match(/new StepLibrarySidebarProvider\(/gu)?.length, 1);
     assert.match(source, /snapshotService,\s*actionService,/u);
     assert.match(source, /resolver:\s*projectDefinitionResolver/u);
-    assert.match(source, /stepCatalogService\.refresh\(resource\)/u);
+    assert.match(source, /stepCatalogService\.refresh\(project \? vscode\.Uri\.parse\(project\.workspaceFolderUri\) : resource\)/u);
     assert.match(source, /projectDefinitionIndex\.reloadConfigurations\(\)/u);
     assert.match(source, /projectDefinitionIndex\.waitForIdle\(\)/u);
     assert.match(

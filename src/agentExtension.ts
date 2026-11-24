@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import { spawn } from 'node:child_process';
 import * as net from 'node:net';
 import { AgentService } from './agentService';
-import { acquireAgentControl } from './agentControl';
+import { acquireVanessaControl } from './vanessaControlLease';
 import { agentClientTemplate, agentLaunchLocale, agentProjectDirectory, prepareAgentProjectDirectory, type AgentClientTemplate } from './agentClient';
 import { YamlParametersManager } from './yamlParametersManager';
 import { AgentStore } from './agentStore';
@@ -76,7 +76,7 @@ export function registerAgentExtension(context: vscode.ExtensionContext, depende
     const selectedArchives = new Set<string>();
     const config = () => vscode.workspace.getConfiguration('kotTestToolkit.agent');
     const trusted = () => vscode.workspace.isTrusted !== false;
-    const control = <T>(acquire: (entered: () => void) => Promise<T>) => acquireAgentControl(acquire,
+    const control = <T>(acquire: (entered: () => void) => Promise<T>) => acquireVanessaControl(acquire,
         () => !!session.snapshot.runActive || ['running', 'stopping'].includes(session.snapshot.status));
     const editable = (files: readonly string[]) => {
         if (vscode.workspace.textDocuments.some(document => document.isDirty && files.some(file => document.uri.fsPath === file))) { throw new Error('Save affected sources before an agent operation.'); }

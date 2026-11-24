@@ -66,6 +66,7 @@
         launchPlatformBtn: document.getElementById('launchPlatformBtn'),
         launchPlatformLabel: document.getElementById('launchPlatformLabel'),
         launchPlatformMenu: document.getElementById('launchPlatformMenu'),
+        startVanessaAction: document.querySelector('[data-command="startVanessa"]'),
         moreActionsBtn: document.getElementById('moreActionsBtn'),
         moreActionsMenu: document.getElementById('moreActionsMenu'),
         addToLauncherAction: document.getElementById('addToLauncherAction'),
@@ -597,7 +598,9 @@
     function renderDetails() {
         const selected = getSelectedInfobase();
         const hasSelection = Boolean(selected);
-        clientPanel?.render(hasSelection ? state.vanessaClients : null, selected?.infobasePath || '');
+        const clients = hasSelection ? state.vanessaClients : null;
+        clientPanel?.render(clients, selected?.infobasePath || '');
+        refs.startVanessaAction?.classList.toggle('hidden', !clients?.rows.length);
         const signature = JSON.stringify([selected, state.platforms, state.pendingAction]);
         if (lastDetailsSignature === signature && state.clientFocusRequest <= lastClientFocusRequest) { return; }
         lastDetailsSignature = signature;
@@ -884,7 +887,10 @@
         clickState.lastInfobasePath = targetPath;
         clickState.lastTimestamp = now;
 
-        state.selectedInfobasePath = targetPath;
+        if (state.selectedInfobasePath !== targetPath) {
+            state.selectedInfobasePath = targetPath;
+            state.vanessaClients = null;
+        }
         render();
         vscode.postMessage({ command: 'select', infobasePath: targetPath });
         if (isDoubleClick && !state.pendingAction) {

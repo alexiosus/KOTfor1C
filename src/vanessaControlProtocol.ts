@@ -1,8 +1,8 @@
-export type VanessaControlCapability = 'state' | 'editor' | 'editorContent' | 'openFeature' | 'loadFeature' | 'selectStep' | 'runFromLine' | 'runFeature' | 'runAll' | 'runCurrent' | 'oneStep' | 'stop' | 'results' | 'breakpoints'
+export type VanessaControlCapability = 'state' | 'editor' | 'editorContent' | 'openFeature' | 'loadFeature' | 'selectStep' | 'runFromLine' | 'runFeature' | 'runAll' | 'runCurrent' | 'runScenario' | 'oneStep' | 'stop' | 'results' | 'breakpoints'
     | 'clientProfilesRead' | 'clientProfilesWrite' | 'clientConnect' | 'clientDisconnect' | 'clientClose'
     | 'variablesRead' | 'variablesWrite' | 'formTree' | 'formWindow' | 'formElement' | 'formWindows' | 'formActivateWindow' | 'recording' | 'formChecks' | 'formSuggestions'
     | 'environment' | 'runtimeSyntax' | 'runtimeSearch' | 'managerLog' | 'clientLog' | 'screenshotWindows' | 'screenshot'
-    | 'stateJson' | 'resultsJson' | 'elementSteps' | 'activeFormElement' | 'recordingResult' | 'clientProfilePort' | 'settingsRead' | 'settingsWrite' | 'mxlOpen';
+    | 'stateJson' | 'resultsJson' | 'runAsync' | 'elementSteps' | 'activeFormElement' | 'recordingResult' | 'clientProfilePort' | 'settingsRead' | 'settingsWrite' | 'settingsPreserveCi' | 'mxlOpen';
 export interface VanessaControlCapabilityStatus { readonly supported: boolean; readonly reason?: 'missingTool' | 'incompatibleSchema' }
 export type VanessaControlCapabilities = Readonly<Record<VanessaControlCapability, VanessaControlCapabilityStatus>>;
 export type VanessaControlReply =
@@ -84,6 +84,7 @@ export function assessVanessaControlCapabilities(tools: readonly unknown[]): Van
         clientProfilePort: { tool: 'manage_test_client_profiles', fields: { action: 'string', name: 'string', port: 'integer' }, literals: { action: ['add', 'edit', 'get_list'] } },
         settingsRead: { tool: 'get_va_settings', fields: { action: 'string', key: 'string', query: 'string', limit: 'integer', format: 'string' }, literals: { action: ['list', 'get'], format: ['json'] } },
         settingsWrite: { tool: 'manage_va_settings', fields: { action: 'string', key: 'string', value: 'string', parameters_json: 'string', base_path: 'string', dry_run: 'boolean', expected_revision: 'integer', expected_current_value: 'string', format: 'string' }, literals: { action: ['set', 'apply'], format: ['json'] } },
+        settingsPreserveCi: { tool: 'manage_va_settings', fields: { action: 'string', preserve_ci_flags: 'boolean' }, literals: { action: ['apply'], preserve_ci_flags: [true] } },
         editor: { tool: 'get_editor_state', fields: { includeContent: 'boolean' }, literals: { includeContent: [false] } },
         editorContent: { tool: 'get_editor_state', fields: { includeContent: 'boolean' }, literals: { includeContent: [true] } },
         openFeature: { tool: 'open_feature_file', fields: { filePath: 'string' } },
@@ -92,6 +93,8 @@ export function assessVanessaControlCapabilities(tools: readonly unknown[]): Van
         runFromLine: { tool: 'run_scenario', fields: { mode: 'string', filePath: 'string', lineNumber: 'integer' }, literals: { mode: ['reloadAndRunFromLine'] } },
         runFeature: { tool: 'run_scenario', fields: { mode: 'string', filePath: 'string' }, literals: { mode: ['reloadAndRun'] } },
         runAll: { tool: 'run_scenario', fields: { mode: 'string' }, literals: { mode: ['all'] } },
+        runScenario: { tool: 'run_scenario', fields: { mode: 'string' }, literals: { mode: ['selected'] } },
+        runAsync: { tool: 'run_scenario', fields: { mode: 'string', wait: 'boolean' }, literals: { mode: ['reloadAndRun'], wait: [false] } },
         runCurrent: { tool: 'run_scenario', fields: { mode: 'string' }, literals: { mode: ['fromCurrentStep'] } },
         oneStep: { tool: 'execute_feature_step', fields: { filePath: 'string', lineNumber: 'integer' } },
         mxlOpen: { tool: 'execute_step_from_text', fields: { stepText: 'string' } },
@@ -169,36 +172,40 @@ export function parseVanessaControlReply(tool: string, value: unknown): VanessaC
     if (text.startsWith('{') && ['get_vanessa_automation_state', 'get_test_results'].includes(tool)) {
         return parseVanessaStructuredReply(tool, text);
     }
-    if (tool === 'execute_feature_step' && text === 'Шаг в строке фича файла успешно выполнен') {
+    if (tool === 'execute_feature_step' && ['Шаг в строке фича файла успешно выполнен', 'Step in feature file line completed successfully'].includes(text)) {
         return { kind: 'stepResult', status: 'passed' };
     }
-    if (tool === 'get_editor_state' && text.startsWith('# Состояние редактора\n')) {
+    if (tool === 'get_editor_state' && /^# (?:Состояние редактора|Editor state)\n/u.test(text)) {
+        const english = text.startsWith('# Editor state\n');
+        const tabsHeading = english ? 'Open tabs' : 'Открытые вкладки';
+        const documentHeading = english ? 'Active document' : 'Активный документ';
+        const contentHeading = english ? '### Contents' : '### Содержимое';
         const sections = [...text.matchAll(/^## (.+)$/gmu)].map(match => match[1]);
-        if (sections[0] !== 'Открытые вкладки' || sections[1] !== 'Активный документ' ||
-            sections.lastIndexOf('Открытые вкладки') !== 0 || sections.lastIndexOf('Активный документ') !== 1) { return { kind: 'unknown' }; }
-        const tabs = /\n## Открытые вкладки\n([\s\S]*?)(?=\n## |$)/u.exec(text)![1];
-        const document = /\n## Активный документ\n([\s\S]*?)(?=\n## |$)/u.exec(text)![1];
-        const counts = [...tabs.matchAll(/^Количество: ([1-9]\d*)$/gmu)];
+        if (sections[0] !== tabsHeading || sections[1] !== documentHeading ||
+            sections.lastIndexOf(tabsHeading) !== 0 || sections.lastIndexOf(documentHeading) !== 1) { return { kind: 'unknown' }; }
+        const [, tabs, document] = text.split('\n## ');
+        if (!tabs?.startsWith(tabsHeading + '\n') || !document?.startsWith(documentHeading + '\n')) { return { kind: 'unknown' }; }
+        const counts = [...tabs.matchAll(/^(?:Количество|Quantity): ([1-9]\d*)$/gmu)];
         const items = [...tabs.matchAll(/^- .+$/gmu)];
         const active = [...tabs.matchAll(/^- \*\*→\*\* (.+?)( \*\(изменена\)\*)?$/gmu)];
-        const lines = [...document.matchAll(/^- Строка: ([1-9]\d*)$/gmu)];
+        const lines = [...document.matchAll(/^- (?:Строка|Line): ([1-9]\d*)$/gmu)];
         if (counts.length === 1 && items.length === Number(counts[0][1]) && active.length === 1 && /\.feature$/iu.test(active[0][1]) &&
             lines.length === 1 && Number.isSafeInteger(Number(lines[0][1]))) {
-            const content = /^### Содержимое\n```gherkin\n([\s\S]*?)\n```(?:\n|$)/mu.exec(document);
-            if (document.includes('### Содержимое') && (!content || document.indexOf('### Содержимое') !== document.lastIndexOf('### Содержимое'))) { return { kind: 'unknown' }; }
+            const content = /^### (?:Содержимое|Contents)\n```gherkin\n([\s\S]*?)\n```(?:\n|$)/mu.exec(document);
+            if (document.includes(contentHeading) && (!content || document.indexOf(contentHeading) !== document.lastIndexOf(contentHeading))) { return { kind: 'unknown' }; }
             return { kind: 'editor', featurePath: active[0][1], lineNumber: Number(lines[0][1]), dirty: !!active[0][2], ...(content ? { content: content[1] } : {}) };
         }
         return { kind: 'unknown' };
     }
-    if (tool === 'run_scenario' && /^## Результат выполнения сценариев: все сценарии выполнены успешно\n(?:Идентификатор прогона: [\da-fA-F]{8}(?:-[\da-fA-F]{4}){3}-[\da-fA-F]{12}\n)?\n(?:Имя сценария: [^\n]+\nРезультат прохождения сценария: Success\n?)+$/u.test(text)) {
-        return { kind: 'runResult', status: 'passed', scenarioCount: [...text.matchAll(/^Результат прохождения сценария: Success$/gmu)].length };
+    if (tool === 'run_scenario' && /^## (?:Результат выполнения сценариев: все сценарии выполнены успешно|Result of script execution: all scripts executed successfully)\n(?:Идентификатор прогона: [\da-fA-F]{8}(?:-[\da-fA-F]{4}){3}-[\da-fA-F]{12}\n)?\n(?:Имя сценария: [^\n]+\n(?:Результат прохождения сценария|Scenario execution result): Success\n?)+$/u.test(text)) {
+        return { kind: 'runResult', status: 'passed', scenarioCount: [...text.matchAll(/^(?:Результат прохождения сценария|Scenario execution result): Success$/gmu)].length };
     }
     if (tool === 'get_test_results' && text.startsWith('# Результаты тестов\n')) {
-        const sections = text.split('\n## Шаги (');
+        const sections = text.split(/\n## (?:Шаги|Steps) \(/u);
         const header = sections[0].split('\n\nТехнические данные:\n');
         if (sections.length === 2 && header.length === 2 && /^- Статус: Failed$/mu.test(header[0])) {
             const count = /^([1-9]\d*)\)\n/u.exec(sections[1])?.[1];
-            const steps = [...sections[1].matchAll(/^([1-9]\d*)\. [^\n]+ → \*\*(Success|Failed|Broken|Pending|Skipped)\*\*(?: \(\d+ мс\))?$/gmu)];
+            const steps = [...sections[1].matchAll(/^([1-9]\d*)\. [^\n]+ → \*\*(Success|Failed|Broken|Pending|Skipped)\*\*(?: \(\d+ (?:мс|ms)\))?$/gmu)];
             const paths = [...header[1].matchAll(/^        ПолныйПутьКФиче: ([^\n]+\.feature)$/gmu)];
             const lines = [...header[1].matchAll(/^        НомерСтрокиФичи: ([1-9]\d*)$/gmu)];
             if (count && steps.length === Number(count) && steps.every((step, index) => Number(step[1]) === index + 1) &&
@@ -206,10 +213,9 @@ export function parseVanessaControlReply(tool: string, value: unknown): VanessaC
                 return { kind: 'failureResult', featurePath: paths[0][1], lineNumber: Number(lines[0][1]) };
             }
         }
-        const parts = text.split('\n## Шаги (');
-        const status = /^- Статус: (Success|Failed|Broken|Pending)$/mu.exec(parts[0])?.[1];
-        const count = parts.length === 2 ? /^([1-9]\d*)\)\n/u.exec(parts[1])?.[1] : undefined;
-        const rows = parts.length === 2 ? [...parts[1].matchAll(/^([1-9]\d*)\. [^\n]+ → \*\*(Success|Failed|Broken|Pending|Skipped)\*\*(?: \([^\n]* мс\))?$/gmu)] : [];
+        const status = /^- Статус: (Success|Failed|Broken|Pending)$/mu.exec(sections[0])?.[1];
+        const count = sections.length === 2 ? /^([1-9]\d*)\)\n/u.exec(sections[1])?.[1] : undefined;
+        const rows = sections.length === 2 ? [...sections[1].matchAll(/^([1-9]\d*)\. [^\n]+ → \*\*(Success|Failed|Broken|Pending|Skipped)\*\*(?: \([^\n]* (?:мс|ms)\))?$/gmu)] : [];
         if (!text.includes('Технические данные:') && count && status && rows.length === Number(count) && rows.every((row, index) => Number(row[1]) === index + 1)) {
             const errors = [...text.matchAll(/^- Ошибка: ([^\n]+)$/gmu)];
             if (status === 'Success' && rows.every(row => row[2] === 'Success')) { return { kind: 'runtimeResult', status: 'passed' }; }
@@ -224,15 +230,17 @@ export function parseVanessaControlReply(tool: string, value: unknown): VanessaC
         if (/^[^\r\n]+\.feature$/iu.test(featurePath)) { return { kind: 'state', state: 'idle', featurePath }; }
         return { kind: 'unknown' };
     }
-    if (tool === 'get_vanessa_automation_state' && text.startsWith('# Состояние Vanessa Automation\n')) {
+    if (tool === 'get_vanessa_automation_state' && /^# (?:Состояние Vanessa Automation|Vanessa Automation Status)\n/u.test(text)) {
         const initial = text.split('\n## ')[0];
-        const flags = [...initial.matchAll(/^- Выполнение сценариев: (да|нет)$/gmu)];
-        const client = [...initial.matchAll(/^- Клиент тестирования подключ[её]н: (да|нет)$/gmu)];
-        const recording = [...initial.matchAll(/^- Включена запись действий пользователя: (да|нет)$/gmu)];
+        const flags = [...initial.matchAll(/^- (?:Выполнение сценариев|Execution of scripts): (да|нет|Yes|No)$/gmu)];
+        const client = [...initial.matchAll(/^- Клиент тестирования подключ[её]н: (да|нет|Yes|No)$/gmu)];
+        const recording = [...initial.matchAll(/^- Включена запись действий пользователя: (да|нет|Yes|No)$/gmu)];
         // .45 writes the scenario result verbatim, including Markdown headings from
         // its error/window details. Only the outer state section names are structural.
-        const stateText = text.replace(/^## (Текущая фича|Текущий сценарий|Текущий шаг) \(по данным прогона\)$/gmu, '## $1');
-        const sections = ['Текущая фича', 'Текущий сценарий', 'Текущий шаг'];
+        const sectionNames = { feature: 'Текущая фича', scenario: 'Текущий сценарий', step: 'Текущий шаг' };
+        const sections = Object.values(sectionNames);
+        const stateText = text.replace(/^## (Текущая фича|Текущий сценарий|Текущий шаг) \(по данным прогона\)$/gmu, '## $1')
+            .replace(/^## Current (feature|scenario|step)$/gmu, (_match, section: keyof typeof sectionNames) => `## ${sectionNames[section]}`);
         const headings = [...stateText.matchAll(/^## (.+)$/gmu)].map(match => match[1]).filter(heading => sections.includes(heading));
         if (flags.length !== 1 || client.length !== 1 ||
             sections.some((heading, index) => headings.indexOf(heading) !== index || headings.lastIndexOf(heading) !== index)) {
@@ -245,12 +253,13 @@ export function parseVanessaControlReply(tool: string, value: unknown): VanessaC
         const lineNumber = line ? Number(line) : undefined;
         const status = /^- status: (Running|Success|Failed|Broken|Pending)$/mu.exec(step)?.[1];
         const stepStatus = status ? ({ Running: 'running', Success: 'passed', Failed: 'failed', Broken: 'stopped', Pending: 'pending' } as const)[status as 'Running' | 'Success' | 'Failed' | 'Broken' | 'Pending'] : undefined;
-        return { kind: 'state', state: flags[0][1] === 'да' ? 'running' : 'idle',
-            ...(recording.length === 1 ? { recording: recording[0][1] === 'да' } : {}),
-            ...(featurePath && featurePath !== 'не указано' ? { featurePath } : {}),
+        const isYes = (value: string) => value === 'да' || value === 'Yes';
+        return { kind: 'state', state: isYes(flags[0][1]) ? 'running' : 'idle',
+            ...(recording.length === 1 ? { recording: isYes(recording[0][1]) } : {}),
+            ...(featurePath && !['не указано', 'not specified'].includes(featurePath) ? { featurePath } : {}),
             ...(lineNumber && Number.isSafeInteger(lineNumber) ? { lineNumber } : {}), ...(stepStatus ? { stepStatus } : {}) };
     }
-    if (tool === 'manage_breakpoints' && text.startsWith('# Точки останова\n')) {
+    if (tool === 'manage_breakpoints' && /^# (?:Точки останова|Breakpoints)\n/u.test(text)) {
         const section = text.split('\n## ')[0].trim();
         const paragraphs = section.split('\n\n');
         const hints = ['Загрузите фичи (`load_features`) и откройте сценарий для работы с точками останова.',
@@ -258,13 +267,13 @@ export function parseVanessaControlReply(tool: string, value: unknown): VanessaC
         // .45 emits this hint even with open Monaco tabs; set/list/remove was verified live.
         // The caller must still verify the active saved file before and after every read.
         if (paragraphs[1] === 'Нет данных из редактора (обновятся при следующем обращении к редактору).') { return { kind: 'breakpointsUnavailable' }; }
-        if (['Точек останова нет.', 'Точек останова нет (по данным редактора).'].includes(paragraphs[1])) {
+        if (['Точек останова нет.', 'Точек останова нет (по данным редактора).', 'There are no breakpoints.'].includes(paragraphs[1])) {
             const advisory = paragraphs.slice(2).join('\n\n');
-            if (/^Количество:|^- \d+$/mu.test(advisory)) { return { kind: 'unknown' }; }
+            if (/^(?:Количество|Quantity):|^- \d+$/mu.test(advisory)) { return { kind: 'unknown' }; }
             if (hints.some(hint => paragraphs.includes(hint))) { return { kind: 'breakpointsUnavailable' }; }
             return { kind: 'breakpoints', lines: [] };
         }
-        const count = /^Количество: ([1-9]\d*)$/mu.exec(section)?.[1];
+        const count = /^(?:Количество|Quantity): ([1-9]\d*)$/mu.exec(section)?.[1];
         const lines = [...section.matchAll(/^- ([1-9]\d*)$/gmu)].map(match => Number(match[1]));
         if (count && lines.length === Number(count) && lines.every(Number.isSafeInteger) && new Set(lines).size === lines.length) {
             return { kind: 'breakpoints', lines };

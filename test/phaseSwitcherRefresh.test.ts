@@ -156,6 +156,8 @@ test('managed Test Manager run keeps authored settings and reports the confirmed
         provider.attachVanessaManagedRunner(async (request: any) => {
             assert.equal(request.filePath, feature); assert.equal(request.sourceText, fs.readFileSync(feature, 'utf8')); assert.ok(request.isCurrent());
             assert.match(request.configurationKey, /^[a-f0-9]{64}$/u);
+            assert.equal(request.settings.parameters, '{"ownSetting":true}');
+            assert.equal(request.settings.basePath, root);
             assert.equal(await request.launch(9877), true);
             fs.writeFileSync(json, '{"ownSetting":false}'); assert.equal(request.isCurrent(), false, 'changed launch settings invalidate the pending request');
             return 'failed';
@@ -279,12 +281,21 @@ test('managed full launch reuses normal infobase preparation and keeps the autho
         const authored = { ExecuteScenarios: true, CloseSystemOnComplete: true, Custom: 'keep', TestClient: { datatestclients: [{ Name: 'OwnClient' }] } };
         fs.writeFileSync(json, JSON.stringify(authored));
         let provisioned = 0; let prepared = 0; let command: string[] = []; let runtime: unknown;
+        let appliedLanguage: string | undefined;
         const Provider = loadPhaseSwitcherProvider({ fsPath: root }, {
             vscode: { EventEmitter: class {}, ProgressLocation: { Notification: 1 }, workspace: { workspaceFolders: [{ uri: { fsPath: root } }],
-                getConfiguration: () => ({ get: () => epf }) }, window: { withProgress: async (_options: unknown, work: () => Promise<unknown>) => work() } },
+                getConfiguration: () => ({ get: (key: string) => key === 'runVanessa.interfaceLanguage' ? 'en' : epf }) },
+                window: { withProgress: async (_options: unknown, work: () => Promise<unknown>) => work() } },
             './oneCPlatform.js': { resolveOneCPlatformForLaunch: async () => ({ clientExePath: platform }), resolveOneCDesignerExePath: () => platform },
             './sharedStartupPlatform.js': { resolveSharedStartupPlatform: async () => ({ clientExePath: platform }) },
-            './startupInfobase.js': { ensureSharedStartupInfobaseMcpReady: async () => { provisioned++; } },
+            './startupInfobase.js': {
+                ensureSharedStartupInfobaseMcpReady: async () => { provisioned++; },
+                setSharedVanessaInterfaceLanguage: async (_context: unknown, executable: string, base: { infobaseDirectory: string }, language: string) => {
+                    assert.equal(executable, platform);
+                    assert.equal(base.infobaseDirectory, path.join(root, 'service'));
+                    appliedLanguage = language;
+                }
+            },
             './infobaseManager.js': { updateManagedInfobaseMetadata: async () => undefined },
             './vanessaControlLaunch': { managedVanessaCommandParts }
         });
@@ -299,7 +310,10 @@ test('managed full launch reuses normal infobase preparation and keeps the autho
         provider.outputInfo = provider.outputAdvanced = () => undefined;
         provider.resolveVanessaLogPathFromJson = () => undefined;
         provider.execute1CProcess = () => { throw new Error('MCP must not wait for the manager to close'); };
-        provider.execute1CProcessDetached = async (_file: string, args: string[]) => { command = args; };
+        provider.execute1CProcessDetached = async (_file: string, args: string[]) => {
+            assert.equal(appliedLanguage, 'en');
+            command = args;
+        };
         const result = await provider.runScenarioInVanessaBuiltIn('Own', 'feature', 'own.feature', { scenarioKey: 'own', jsonPath: json }, { mcpPort: 9877 });
         assert.equal(result, 'started'); assert.equal(prepared, 1); assert.equal(provisioned, 1);
         const params = command[command.indexOf('/C') + 1];

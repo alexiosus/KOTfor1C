@@ -694,7 +694,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
             vanessaClients: {
                 title: t('Vanessa test clients'), connectManager: t('Connect Vanessa'), settings: t('Connection settings'), refresh: t('Refresh'),
                 hint: t('Select saved users to add or connect them in the current Vanessa session.'), all: t('All users'), new: t('Add user'),
-                liveOnly: t('Vanessa only'), saveToKot: t('Save to KOT'), outdated: t('Settings differ from saved'), updateConnect: t('Apply and connect'), passwordLabel: t('Password'), keysLabel: t('Launch keys'), emptyShort: t('No saved test clients.'),
+                liveOnly: t('Vanessa only'), saveToKot: t('Save to KOT'), outdated: t('Settings differ from saved'), updateConnect: t('Apply and connect'), passwordLabel: t('Password'), keysLabel: t('Launch keys'), emptyShort: t('Add a test client to open this infobase in Vanessa.'),
                 currentPort: t('Port in Vanessa: {0}'),
                 working: t('Updating clients…'), loading: t('Reading clients…'), ready: t('Vanessa connected'), detached: t('Vanessa not connected'),
                 add: t('Add to Vanessa'), connect: t('Connect'), disconnect: t('Disconnect'), select: t('Select client'),
@@ -792,7 +792,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
         };
 
         const category = (key: string, title: string, common: string[][], other: string[][]) => {
-            const buttons = (items: string[][], cls: string) => items.map(([command, icon, label]) => `<button class="${cls}" type="button" data-command="${command}" data-requires-selection="true"><span class="codicon codicon-${icon}" aria-hidden="true"></span><span>${escapeHtml(label)}</span></button>`).join('');
+            const buttons = (items: string[][], cls: string) => items.map(([command, icon, label]) => `<button class="${cls}${command === 'startVanessa' ? ' hidden' : ''}" type="button" data-command="${command}" data-requires-selection="true"><span class="codicon codicon-${icon}" aria-hidden="true"></span><span>${escapeHtml(label)}</span></button>`).join('');
             return `<section class="action-category" data-category="${key}"><h3 class="action-category-title">${escapeHtml(title)}</h3><div class="action-category-buttons">${buttons(common, 'toolbar-btn')}<details class="action-category-menu"><summary class="toolbar-btn" aria-label="${escapeHtml(t('More actions'))}" title="${escapeHtml(t('More actions'))}"><span class="codicon codicon-ellipsis" aria-hidden="true"></span></summary><div class="action-category-popover" role="menu">${buttons(other, 'menu-item')}</div></details></div></section>`;
         };
         const initialStateJson = JSON.stringify(this.buildState()).replace(/</gu, '\\u003c');

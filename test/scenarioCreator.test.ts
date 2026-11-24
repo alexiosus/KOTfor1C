@@ -41,7 +41,8 @@ async function harness(t: test.TestContext, inputs: string[], customTemplate?: s
     const opened: string[] = []; const prompts: Array<{ prompt?: string; value?: string }> = [];
     const state = new Map<string, unknown>();
     let seriesChoice: string | undefined; let propertyChoice: string | undefined; let cancelFolder = false; let manualHeaders = false;
-    let destination = root; let scanGate: Promise<void> | undefined; let releaseScan = () => {};
+    let destination = root; let scanRoot: string | undefined; let cancelCategory = false;
+    let scanGate: Promise<void> | undefined; let releaseScan = () => {};
     const propertyChoices = new Map<string, string>();
     const host = {
         Uri: { file: uri, joinPath: (base: ReturnType<typeof uri>, ...parts: string[]) => uri(path.join(base.fsPath, ...parts)) },
@@ -75,6 +76,7 @@ async function harness(t: test.TestContext, inputs: string[], customTemplate?: s
             showInformationMessage: async () => {},
             showTextDocument: async (document: { uri: ReturnType<typeof uri> }) => { opened.push(document.uri.fsPath); },
             showQuickPick: async (items: Array<{ action?: string; mode?: string; value?: string; series?: { prefix: string }; entryKind?: string; category?: string; base?: unknown; profile?: unknown }>, options: { title?: string }) =>
+                cancelCategory && options.title === 'Nested scenario category' ? undefined :
                 items.find(item => seriesChoice ? item.series?.prefix === seriesChoice : item.action === 'manual')
                 ?? items.find(item => options.title && propertyChoices.get(options.title) === item.value && item.value !== undefined)
                 ?? items.find(item => propertyChoice && item.value === propertyChoice)
@@ -101,7 +103,7 @@ async function harness(t: test.TestContext, inputs: string[], customTemplate?: s
             './scenarioPropertiesModel': propertyModel,
             './scenarioYamlDocument': { ScenarioYamlDocument }, './spprScenarioFormat': spprFormat,
             './projectSystemFunctions.js': { loadProjectSystemFunctions: async (_target: unknown, defaults: unknown) => defaults },
-            './scenarioScanRoot': { getScenarioScanRootPath: () => destination, resolveScenarioScanRootFsPath: () => destination, resolveProcessScanRootFsPath: () => destination },
+            './scenarioScanRoot': { getScenarioScanRootPath: () => scanRoot ?? destination, resolveScenarioScanRootFsPath: () => scanRoot ?? destination, resolveProcessScanRootFsPath: () => scanRoot ?? destination },
             './workspaceScanner': { scanWorkspaceForScenarioCatalog: async () => { await scanGate; return { all: [] }; } },
             './gherkinLanguage': { getConfiguredScenarioLanguage: () => 'en', applyPreferredStepKeyword: (line: string) => line }
         };
@@ -125,6 +127,7 @@ async function harness(t: test.TestContext, inputs: string[], customTemplate?: s
     };
     return { root, errors, opened, prompts, groupPickItems, useSeries(prefix: string) { seriesChoice = prefix; }, chooseProperty(value: string) { propertyChoice = value; },
         selectHeader(title: string, value: string) { propertyChoices.set(title, value); }, useDestination(folder: string) { destination = folder; },
+        useScanRoot(folder: string) { scanRoot = folder; }, cancelCategory(value: boolean) { cancelCategory = value; },
         pauseScanning() { scanGate = new Promise(resolve => { releaseScan = resolve; }); }, resumeScanning() { releaseScan(); },
         fillHeadersManually() { manualHeaders = true; }, cancelFolder() { cancelFolder = true; }, api: load('./scenarioCreator') as typeof import('../src/scenarioCreator'),
         context: { extensionUri: uri(process.cwd()), workspaceState: { get: (key: string) => state.get(key), update: async (key: string, value: unknown) => { state.set(key, value); } } } as Parameters<typeof import('../src/scenarioCreator').handleCreateMainScenario>[0] };
@@ -242,6 +245,29 @@ test('cancelling the folder picker does not consume a proposed series number', a
     await h.api.handleCreateNestedScenario(h.context);
     assert.equal((await store.read()).series[0].lastNumber, 0);
     assert.equal(fs.existsSync(path.join(h.root, '000012001')), false);
+});
+
+test('a cancelled native scenario can be created with the same number through a different Windows path spelling', async t => {
+    const h = await harness(t, ['Cancelled', '000017130', 'Repeated', '000017130'], undefined, 'native');
+    const scanRoot = path.join(h.root, 'Yaml');
+    const codeFolder = path.join(scanRoot, '000017130');
+    await fsp.mkdir(scanRoot);
+    h.useScanRoot(scanRoot);
+    h.useDestination(process.platform === 'win32' ? path.join(h.root, 'yaml') : scanRoot);
+    const options = { existingCategories: ['Reporting'] };
+    h.cancelCategory(true);
+    await h.api.handleCreateNestedScenario(h.context, options);
+    assert.equal(h.prompts.filter(prompt => prompt.prompt === 'Enter scenario numeric code (digits only)').length, 1);
+    await assert.rejects(fsp.stat(codeFolder), { code: 'ENOENT' });
+    h.cancelCategory(false);
+    await h.api.handleCreateNestedScenario(h.context, options);
+    assert.deepEqual(h.errors, []);
+    const config = parseDocument(await fsp.readFile(path.join(codeFolder, 'meta.yaml'), 'utf8')).toJS();
+    const sidecar = parseDocument(await fsp.readFile(path.join(codeFolder, 'meta.yaml.kot.yml'), 'utf8')).toJS();
+    assert.equal(sidecar.identity.uid, config.ДанныеСценария.UID);
+    assert.equal(config.ДанныеСценария.Код, '000017130');
+    assert.equal(h.opened.length, 1);
+    assert.equal(h.opened[0].toLowerCase(), path.join(codeFolder, 'scen.feature').toLowerCase());
 });
 
 test('creating a nested scenario never overwrites an existing code-named folder', async t => {

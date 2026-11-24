@@ -1,13 +1,15 @@
 import { kotWindow } from './kotInteraction';
 import * as cp from 'node:child_process';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { decideSharedStartupInfobaseAction } from './startupInfobasePolicy';
-import { serializeStartupInfobasePreparation } from './startupInfobasePreparation';
+import { replaceSharedStartupInfobase, serializeStartupInfobasePreparation } from './startupInfobasePreparation';
 import { getTranslator } from './localization';
 import { buildFileInfobaseConnectionArgument } from './oneCInfobaseConnection';
 import { resolveOneCDesignerExePath } from './oneCPlatform';
+import { runningOneCInfobasePlatform } from './oneCInfobasePlatform';
 import { formatProcessCommandForDisplay } from './processCommandDisplay';
 import { McpComponentProvisioner, VANESSA_MCP_COMPONENT, buildMcpExtensionInstallArgs, recordBundledMcpComponents } from './vanessaControlProvisioning';
 import { parseMcpPermissionsReport } from './vanessaControlPermissions';
@@ -25,6 +27,9 @@ const STARTUP_INFOBASE_SERVICE_USER_NAME = 'KOTStartupService';
 const STARTUP_INFOBASE_TEMPLATE_SERVICE_USER_PASSWORD = '';
 const STARTUP_INFOBASE_AUTH_STATE_SCHEMA_VERSION = 2;
 const STARTUP_INFOBASE_TEMPLATE_DT_RELATIVE_PATH = path.join('tools', 'startup-infobase', 'KOTStartupTemplate.dt');
+const STARTUP_HELPER_NAME = 'KOTMcpPermissions';
+const STARTUP_HELPER_TIMEOUT_MS = 30_000;
+const VANESSA_WINDOW_EXTENSION = { name: 'KOTVanessaWindow', version: '1.0.1' };
 
 export interface SharedStartupInfobaseAuthentication {
     username: string;
@@ -47,6 +52,7 @@ interface SharedStartupInfobaseAuthState {
     configuredAt: string;
     provisioningMethod: 'templateDt';
     templateDtDescriptor: string;
+    extensionVersion?: string;
 }
 
 export interface EnsureSharedStartupInfobaseResult {
@@ -75,23 +81,24 @@ export async function ensureSharedStartupInfobaseMcpReady(context: vscode.Extens
     const t = await getTranslator(context.extensionUri);
     const concurrent = activeMcpEnsureOperations.get(key);
     if (concurrent) { return concurrent; }
+    const isBusy = () => new Promise<boolean>((resolve, reject) => {
+        // Return only a boolean, never command lines (which can contain credentials).
+        const script = "$ErrorActionPreference='Stop'; $base=$env:KOT_MCP_SERVICE_IB.Replace('/','\\').TrimEnd('\\'); "
+            + "$pattern='(?i)(?:^|[=;\\s\"])'+[regex]::Escape($base)+'(?=$|[;\\s\"])'; "
+            + "$busy=@(Get-CimInstance Win32_Process -Filter \"Name LIKE '1cv8%'\" | Where-Object { $_.CommandLine -and $_.CommandLine.Replace('/','\\') -match $pattern }).Count -gt 0; "
+            + 'if($busy){Write-Output busy}else{Write-Output idle}';
+        cp.execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script],
+            { windowsHide: true, timeout: 15_000, env: { ...process.env, KOT_MCP_SERVICE_IB: key } }, (error, stdout) => {
+                if (error || !['busy', 'idle'].includes(stdout.trim())) { reject(new Error('Could not check active service infobase sessions.')); }
+                else { resolve(stdout.trim() === 'busy'); }
+            });
+    });
     const installer = new McpComponentProvisioner({
         readInstalledHash: async () => {
             const state = await readJsonFile<{ schemaVersion?: number; safeMode?: boolean; sha256?: string }>(statePath);
             return state?.schemaVersion === 2 && state.safeMode === false ? state.sha256 : undefined;
         },
-        isBusy: () => new Promise<boolean>((resolve, reject) => {
-            // Return only a boolean, never command lines (which can contain credentials).
-            const script = "$ErrorActionPreference='Stop'; $base=$env:KOT_MCP_SERVICE_IB.Replace('/','\\').TrimEnd('\\'); "
-                + "$pattern='(?i)(?:^|[=;\\s\"])'+[regex]::Escape($base)+'(?=$|[;\\s\"])'; "
-                + "$busy=@(Get-CimInstance Win32_Process -Filter \"Name LIKE '1cv8%'\" | Where-Object { $_.CommandLine -and $_.CommandLine.Replace('/','\\') -match $pattern }).Count -gt 0; "
-                + 'if($busy){Write-Output busy}else{Write-Output idle}';
-            cp.execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script],
-                { windowsHide: true, timeout: 15_000, env: { ...process.env, KOT_MCP_SERVICE_IB: key } }, (error, stdout) => {
-                    if (error || !['busy', 'idle'].includes(stdout.trim())) { reject(new Error('Could not check active service infobase sessions.')); }
-                    else { resolve(stdout.trim() === 'busy'); }
-                });
-        }),
+        isBusy,
         acquireArtifact: () => acquireMcpComponent(context.globalStorageUri.fsPath, VANESSA_MCP_COMPONENT),
         install: async (_base, artifact) => {
             const designer = resolveOneCDesignerExePath(clientExePath);
@@ -123,9 +130,79 @@ export async function ensureSharedStartupInfobaseMcpReady(context: vscode.Extens
         writeInstalledHash: async (_base, sha256) => writeJsonFile(statePath,
             { schemaVersion: 2, safeMode: false, version: VANESSA_MCP_COMPONENT.version, sha256 })
     });
-    const operation = serializeStartupInfobasePreparation(key, () => installer.ensure(key));
+    const operation = serializeStartupInfobasePreparation(key, async () => {
+        await installer.ensure(key);
+        const windowStatePath = path.join(key, '.kot-vanessa-window.json');
+        const windowExtension = await readJsonFile<{ version?: string }>(windowStatePath);
+        if (windowExtension?.version === VANESSA_WINDOW_EXTENSION.version) { return; }
+        const channel = getSharedStartupInfobaseOutputChannel();
+        try {
+            if (await isBusy()) { return; }
+            const designer = resolveOneCDesignerExePath(clientExePath);
+            if (!designer) { throw new Error('1C Designer is required to install the Vanessa window extension.'); }
+            const source = vscode.Uri.joinPath(context.extensionUri, 'tools', 'startup-infobase', 'vanessa-window').fsPath;
+            const auth = base.authentication ? ['/N', base.authentication.username, '/P', base.authentication.password] : [];
+            await run1CCommand(designer, ['DESIGNER', '/DisableStartupDialogs', '/DisableStartupMessages',
+                '/IBConnectionString', buildFileInfobaseConnectionArgument(key), ...auth,
+                '/LoadConfigFromFiles', source, '-Extension', VANESSA_WINDOW_EXTENSION.name, '/UpdateDBCfg'],
+                startupPaths.rootDirectory, t('Install Vanessa window extension'), path.join(startupPaths.logsDirectory, '06-vanessa-window.log'),
+                channel, t, STARTUP_HELPER_TIMEOUT_MS);
+            await writeJsonFile(windowStatePath, VANESSA_WINDOW_EXTENSION);
+        } catch (error) {
+            // Caption installation is optional and must not disable an otherwise working manager.
+            channel.appendLine(t('Could not prepare the Vanessa window title: {0}', String(error)));
+        }
+    });
     activeMcpEnsureOperations.set(key, operation);
     try { await operation; } finally { if (activeMcpEnsureOperations.get(key) === operation) { activeMcpEnsureOperations.delete(key); } }
+}
+
+/** Set the service user's language before starting a new Vanessa session. */
+export async function setSharedVanessaInterfaceLanguage(context: vscode.ExtensionContext, clientExePath: string,
+    base: EnsureSharedStartupInfobaseResult, language: 'ru' | 'en'): Promise<void> {
+    const startupPaths = getSharedStartupInfobasePaths();
+    if (!startupPaths || path.resolve(base.infobaseDirectory) !== path.resolve(startupPaths.infobaseDirectory)
+        || base.authentication?.username !== STARTUP_INFOBASE_SERVICE_USER_NAME) {
+        throw new Error('A KOT service infobase and user are required to prepare Vanessa startup.');
+    }
+    const { authentication } = base;
+    const designer = resolveOneCDesignerExePath(clientExePath);
+    if (!designer) { throw new Error('1C Designer is required to prepare Vanessa startup.'); }
+    const t = await getTranslator(context.extensionUri);
+    const channel = getSharedStartupInfobaseOutputChannel();
+    const root = path.join(startupPaths.rootDirectory, 'mcp-preparation');
+    const source = vscode.Uri.joinPath(context.extensionUri, 'tools', 'startup-infobase', 'mcp-permissions', `${STARTUP_HELPER_NAME}.xml`).fsPath;
+    const formRoot = path.join(path.dirname(source), STARTUP_HELPER_NAME, 'Forms');
+    const sourceFiles = [source, path.join(formRoot, 'Settings.xml'), path.join(formRoot, 'Settings', 'Ext', 'Form.xml'),
+        path.join(formRoot, 'Settings', 'Ext', 'Form', 'Module.bsl')];
+    const contents = await Promise.all(sourceFiles.map(file => fs.promises.readFile(file)));
+    const sourceHash = createHash('sha256').update(designer).update(Buffer.concat(contents)).digest('hex').slice(0, 16);
+    const helperPath = path.join(root, `startup-${sourceHash}.epf`);
+    const common = ['/DisableStartupDialogs', '/DisableStartupMessages', '/IBConnectionString',
+        buildFileInfobaseConnectionArgument(base.infobaseDirectory), '/N', authentication.username, '/P', authentication.password];
+
+    await serializeStartupInfobasePreparation(base.infobaseDirectory, async () => {
+        await ensureDirectory(root);
+        const work = await fs.promises.mkdtemp(path.join(root, 'startup-'));
+        try {
+            const reportPath = path.join(work, 'language.json');
+            if (/[;|\r\n]/u.test(reportPath)) { throw new Error('The service infobase path contains unsupported startup delimiters.'); }
+            if (!await pathExists(helperPath)) {
+                const temporaryEpf = path.join(work, 'startup.epf');
+                await run1CCommand(designer, ['DESIGNER', ...common, '/LoadExternalDataProcessorOrReportFromFiles', source, temporaryEpf],
+                    root, t('Build Vanessa startup helper'), path.join(work, 'build.log'), channel, t, STARTUP_HELPER_TIMEOUT_MS);
+                await fs.promises.rename(temporaryEpf, helperPath);
+            }
+            await run1CCommand(clientExePath, ['ENTERPRISE', ...common, '/Execute', helperPath, '/C', `KOTMcpPreparation=KOTSetLanguage|${language}|${reportPath}`],
+                root, t('Set Vanessa interface language'), path.join(work, 'language.log'), channel, t, STARTUP_HELPER_TIMEOUT_MS);
+            const report = JSON.parse((await readUtf8File(reportPath)).replace(/^\uFEFF/u, '')) as { language?: string; error?: string };
+            if (report.language !== language) {
+                throw new Error(report.error || t('Could not set the Vanessa interface language to {0}.', language));
+            }
+        } finally {
+            await fs.promises.rm(work, { recursive: true, force: true }).catch(() => undefined);
+        }
+    });
 }
 
 export function getSharedStartupInfobaseOutputChannel(): vscode.OutputChannel {
@@ -146,11 +223,6 @@ function getOutputTail(output: string, maxLength: number = 4000): string {
 
 async function ensureDirectory(directoryPath: string): Promise<void> {
     await fs.promises.mkdir(directoryPath, { recursive: true });
-}
-
-async function recreateDirectory(directoryPath: string): Promise<void> {
-    await fs.promises.rm(directoryPath, { recursive: true, force: true });
-    await ensureDirectory(directoryPath);
 }
 
 async function pathExists(targetPath: string): Promise<boolean> {
@@ -186,7 +258,8 @@ async function run1CCommand(
     stepTitle: string,
     outFilePath: string,
     channel: vscode.OutputChannel,
-    t: Awaited<ReturnType<typeof getTranslator>>
+    t: Awaited<ReturnType<typeof getTranslator>>,
+    timeout?: number
 ): Promise<void> {
     const effectiveArgs = [...args, '/Out', outFilePath];
     channel.appendLine(t('Startup infobase step: {0}', stepTitle));
@@ -198,7 +271,8 @@ async function run1CCommand(
         const child = cp.spawn(exePath, effectiveArgs, {
             cwd,
             shell: false,
-            windowsHide: true
+            windowsHide: true,
+            timeout
         });
 
         child.stdout?.on('data', data => {
@@ -257,6 +331,7 @@ function isValidSharedStartupInfobaseAuthState(
     }
 
     return state.schemaVersion === STARTUP_INFOBASE_AUTH_STATE_SCHEMA_VERSION
+        && typeof state.infobaseDirectory === 'string'
         && path.resolve(state.infobaseDirectory) === path.resolve(startupPaths.infobaseDirectory)
         && state.provisioningMethod === 'templateDt'
         && typeof state.username === 'string'
@@ -337,7 +412,7 @@ export function getSharedStartupInfobasePaths(): SharedStartupInfobasePaths | nu
         infobaseDirectory,
         logsDirectory: path.join(rootDirectory, STARTUP_INFOBASE_LOGS_DIRECTORY_NAME),
         markerFilePath: path.join(infobaseDirectory, STARTUP_INFOBASE_MARKER_FILE_NAME),
-        authStateFilePath: path.join(rootDirectory, STARTUP_INFOBASE_AUTH_STATE_FILE_NAME)
+        authStateFilePath: path.join(infobaseDirectory, STARTUP_INFOBASE_AUTH_STATE_FILE_NAME)
     };
 }
 
@@ -394,8 +469,10 @@ export async function ensureSharedStartupInfobaseReady(
         await ensureDirectory(startupPaths.rootDirectory);
         await ensureDirectory(startupPaths.logsDirectory);
 
+        const legacyAuthPath = path.join(startupPaths.rootDirectory, STARTUP_INFOBASE_AUTH_STATE_FILE_NAME);
+        const readAuthState = () => readJsonFile<SharedStartupInfobaseAuthState>(startupPaths.authStateFilePath);
         const storedAuthState = process.platform === 'win32'
-            ? await readJsonFile<SharedStartupInfobaseAuthState>(startupPaths.authStateFilePath)
+            ? (await readAuthState()) ?? await readJsonFile<SharedStartupInfobaseAuthState>(legacyAuthPath)
             : null;
         const storedAuthentication = isValidSharedStartupInfobaseAuthState(startupPaths, storedAuthState)
             ? {
@@ -407,6 +484,8 @@ export async function ensureSharedStartupInfobaseReady(
             ? await resolveStartupInfobaseTemplateDtInfo(context)
             : null;
         const markerExists = await pathExists(startupPaths.markerFilePath);
+        const version: unknown = context.extension?.packageJSON.version;
+        const extensionVersion = typeof version === 'string' && version.trim() ? version : undefined;
         const templateDescriptorMatches = storedAuthState?.provisioningMethod !== 'templateDt'
             || (!!templateDtInfo && storedAuthState.templateDtDescriptor === templateDtInfo.descriptor);
         const decision = decideSharedStartupInfobaseAction({
@@ -414,7 +493,15 @@ export async function ensureSharedStartupInfobaseReady(
             forceRecreate: options?.forceRecreate === true,
             platform: process.platform,
             hasStoredAuthentication: storedAuthentication !== null,
-            templateDescriptorMatches
+            templateDescriptorMatches,
+            extensionVersionChanged: !!extensionVersion && (!storedAuthentication || storedAuthState?.extensionVersion !== extensionVersion)
+        });
+
+        const reuse = (authentication: SharedStartupInfobaseAuthentication | null): EnsureSharedStartupInfobaseResult => ({
+            infobaseDirectory: startupPaths.infobaseDirectory,
+            reusedExistingInfobase: true,
+            createdInfobase: false,
+            authentication
         });
 
         if (decision.action === 'reuse') {
@@ -425,13 +512,19 @@ export async function ensureSharedStartupInfobaseReady(
             } else {
                 output.appendLine(t('Reusing existing legacy shared startup infobase without service credentials.'));
             }
-            return {
-                infobaseDirectory: startupPaths.infobaseDirectory,
-                reusedExistingInfobase: true,
-                createdInfobase: false,
-                authentication: decision.authentication === 'stored' ? storedAuthentication : null
-            };
+            return reuse(decision.authentication === 'stored' ? storedAuthentication : null);
         }
+
+        const canReplace = async () => {
+            if (process.platform !== 'win32' || !await pathExists(startupPaths.markerFilePath)) { return true; }
+            const idle = await runningOneCInfobasePlatform(startupPaths.infobaseDirectory).then(session => !session, () => false);
+            if (idle) { return true; }
+            const message = t('The service infobase will be recreated when no 1C sessions are using it.');
+            if (options?.forceRecreate) { throw new Error(message); }
+            output.appendLine(message);
+            return false;
+        };
+        if (!await canReplace()) { return reuse(storedAuthentication); }
 
         const recreateReason = decision.action === 'recreate'
             ? t('Recreating shared startup infobase.')
@@ -447,38 +540,58 @@ export async function ensureSharedStartupInfobaseReady(
             );
         }
 
-        await recreateDirectory(startupPaths.infobaseDirectory);
-        await fs.promises.rm(startupPaths.authStateFilePath, { force: true });
-
-        await run1CCommand(
-            designerExePath,
-            ['CREATEINFOBASE', buildFileInfobaseConnectionArgument(startupPaths.infobaseDirectory, { trailingSemicolon: true })],
-            startupPaths.rootDirectory,
-            t('Create shared startup infobase'),
-            path.join(startupPaths.logsDirectory, '01-create-startup-infobase.log'),
-            output,
-            t
-        );
-
-        let authentication: SharedStartupInfobaseAuthentication | null = null;
-        if (process.platform === 'win32') {
-            authentication = getTemplateSharedStartupInfobaseAuthentication();
-            await restoreSharedStartupInfobaseFromTemplateDt(
-                startupPaths,
-                templateDtInfo!.templatePath,
-                designerExePath,
-                output,
-                t
-            );
-            await recordBundledMcpComponents(templateDtInfo!.templatePath, startupPaths.infobaseDirectory);
-            await writeJsonFile(
-                startupPaths.authStateFilePath,
-                {
+        const work = await fs.promises.mkdtemp(path.join(startupPaths.rootDirectory, 'prepare-'));
+        const restored = path.join(work, STARTUP_INFOBASE_DIRECTORY_NAME);
+        let backupRoot: string | undefined;
+        const authentication = templateDtInfo ? getTemplateSharedStartupInfobaseAuthentication() : null;
+        try {
+            await ensureDirectory(restored);
+            await run1CCommand(designerExePath,
+                ['CREATEINFOBASE', buildFileInfobaseConnectionArgument(restored, { trailingSemicolon: true })],
+                startupPaths.rootDirectory, t('Create shared startup infobase'), path.join(startupPaths.logsDirectory, '01-create-startup-infobase.log'), output, t);
+            if (templateDtInfo && authentication) {
+                await restoreSharedStartupInfobaseFromTemplateDt({ ...startupPaths, infobaseDirectory: restored },
+                    templateDtInfo.templatePath, designerExePath, output, t);
+                await recordBundledMcpComponents(templateDtInfo.templatePath, restored);
+                await writeJsonFile(path.join(restored, STARTUP_INFOBASE_AUTH_STATE_FILE_NAME), {
                     ...buildSharedStartupInfobaseAuthenticationState(startupPaths, authentication),
                     provisioningMethod: 'templateDt',
-                    templateDtDescriptor: templateDtInfo!.descriptor
-                } satisfies SharedStartupInfobaseAuthState
-            );
+                    templateDtDescriptor: templateDtInfo.descriptor,
+                    extensionVersion
+                } satisfies SharedStartupInfobaseAuthState);
+            }
+            if (!await pathExists(path.join(restored, STARTUP_INFOBASE_MARKER_FILE_NAME))) {
+                throw new Error(t('The restored service infobase could not be found.'));
+            }
+            const current = await readAuthState();
+            if (extensionVersion && !options?.forceRecreate && isValidSharedStartupInfobaseAuthState(startupPaths, current)
+                && current.extensionVersion === extensionVersion && await pathExists(startupPaths.markerFilePath)) {
+                return reuse({ username: current.username, password: current.password });
+            }
+            const backups = path.join(startupPaths.rootDirectory, 'backups');
+            await ensureDirectory(backups);
+            backupRoot = await fs.promises.mkdtemp(path.join(backups, `${Date.now()}-`));
+            const backup = path.join(backupRoot, STARTUP_INFOBASE_DIRECTORY_NAME);
+            // Earlier versions stored the service account separately from the database.
+            if (!current && storedAuthState && await pathExists(legacyAuthPath)) {
+                await fs.promises.copyFile(legacyAuthPath, path.join(backupRoot, STARTUP_INFOBASE_AUTH_STATE_FILE_NAME));
+            }
+            if (!await canReplace()) { return reuse(storedAuthentication); }
+            replaceSharedStartupInfobase(startupPaths.infobaseDirectory, restored, backup);
+            if (fs.existsSync(backup)) {
+                const message = t('Previous service infobase saved at {0}.', backup);
+                output.appendLine(message);
+                const open = t('Open backup folder');
+                void Promise.resolve(kotUi.showInformationMessage(message, open)).then(choice => {
+                    if (choice === open) { return vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(backup)); }
+                    return undefined;
+                }).catch(() => undefined);
+            }
+        } finally {
+            await fs.promises.rm(work, { recursive: true, force: true }).catch(() => undefined);
+            if (backupRoot && !fs.existsSync(path.join(backupRoot, STARTUP_INFOBASE_DIRECTORY_NAME))) {
+                await fs.promises.rm(backupRoot, { recursive: true, force: true }).catch(() => undefined);
+            }
         }
 
         return {

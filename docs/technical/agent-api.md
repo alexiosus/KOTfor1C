@@ -11,7 +11,7 @@
 | [agentActions.ts](../../src/agentActions.ts), [kotInteraction.ts](../../src/kotInteraction.ts) | Выполнение штатных действий, вопросы мастеров, ответы, отмена и маршрутизация UI в контексте операции |
 | [agentNativeActions.ts](../../src/agentNativeActions.ts) | Каталог разрешённых действий и адаптеры общих сервисов KOT |
 | [agentExecution.ts](../../src/agentExecution.ts) | Последовательный запуск, остановка на ошибке, снимки источников и результаты |
-| [agentControl.ts](../../src/agentControl.ts), [agentNativeSources.ts](../../src/agentNativeSources.ts) | Ожидание локальной блокировки без повтора действия; точные строки native-скриптов и вложенные вызовы |
+| [vanessaControlLease.ts](../../src/vanessaControlLease.ts), [agentNativeSources.ts](../../src/agentNativeSources.ts) | Ожидание локальной блокировки без повтора действия; точные строки native-скриптов и вложенные вызовы |
 | [agentClient.ts](../../src/agentClient.ts) | Локальное чтение именованного профиля из настроек теста с сохранением подключения начальными шагами |
 | [agentStore.ts](../../src/agentStore.ts) | Локальные атомарно публикуемые записи, события, артефакты и восстановление |
 | [agentRepair.ts](../../src/agentRepair.ts) | Предложения, политика, решения пользователя, проверка базовых SHA-256 и применение |

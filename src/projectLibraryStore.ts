@@ -44,7 +44,10 @@ export interface ProjectLibrarySnapshot {
     readonly legacyImports: readonly ProjectLegacyImportScope[];
     /** Derived from live sidecars and per-object deletion history; never persisted as a shared list. */
     readonly knownScenarioKeys?: readonly string[];
+    /** Ambiguous entities are omitted from display snapshots and their files are left untouched. */
+    readonly conflictingKeys?: readonly string[];
 }
+export type ProjectLibraryReadMode = 'strict' | 'display';
 export interface ProjectLibraryImport {
     readonly groups: readonly ProjectGroup[];
     readonly entities: readonly { readonly identity: ProjectEntityIdentity; readonly metadata: ProjectEntityMetadata }[];
@@ -68,6 +71,7 @@ interface LoadedLibrary {
     recordPaths: Map<string, string>;
     originals: Map<string, string | undefined>;
     knownScenarioKeys: Set<string>;
+    conflictingKeys: Set<string>;
 }
 interface PendingWrite {
     readonly filePath: string;
@@ -127,6 +131,33 @@ export function projectEntityKey(identity: ProjectEntityIdentity): string {
     const normalized = portableIdentity(identity);
     if (normalized.kind !== 'feature' && normalized.uid) { return `uid:${normalized.uid}`; }
     return `${normalized.kind}:${normalized.relativePath}`;
+}
+
+function localPathKey(filePath: string): string {
+    return process.platform === 'win32' ? filePath.toLowerCase() : filePath;
+}
+
+function uniqueLocalPaths(paths: readonly string[]): Map<string, string> {
+    const unique = new Map<string, string>();
+    for (const filePath of paths) {
+        const key = localPathKey(filePath);
+        if (!unique.has(key)) { unique.set(key, filePath); }
+    }
+    return unique;
+}
+
+export function duplicateProjectEntitySources(identities: readonly ProjectEntityIdentity[]): { key: string; paths: [string, string] }[] {
+    const seen = new Map<string, string>();
+    const duplicates: { key: string; paths: [string, string] }[] = [];
+    for (const identity of identities) {
+        const key = projectEntityKey(identity);
+        const previous = seen.get(key);
+        if (previous === undefined) { seen.set(key, identity.relativePath); }
+        else if (localPathKey(previous) !== localPathKey(identity.relativePath)) {
+            duplicates.push({ key, paths: [previous, identity.relativePath] });
+        }
+    }
+    return duplicates;
 }
 function scenarioLedgerKey(value: unknown): string {
     const key = textField(value, 'known scenario key');
@@ -242,7 +273,7 @@ export class ProjectLibraryStore {
 
     private async serial<T>(operation: () => Promise<T>): Promise<T> {
         const expected = projectFormat(this.rootPath);
-        const key = await fs.realpath(this.rootPath).catch(() => this.rootPath);
+        const key = localPathKey(await fs.realpath(this.rootPath).catch(() => this.rootPath));
         const previous = mutationQueues.get(key) ?? Promise.resolve();
         const result = previous.then(async () => {
             assertProjectTransitionBranch(this.rootPath);
@@ -274,10 +305,11 @@ export class ProjectLibraryStore {
             const relative = path.relative(this.rootPath, directory);
             if (path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) { return empty; }
             if (this.excludedPath(directory)) { return empty; }
-            if (relative.split(path.sep).some(segment => excluded.has(segment.toLowerCase())) || visited.has(directory)) { return empty; }
+            const directoryKey = localPathKey(directory);
+            if (relative.split(path.sep).some(segment => excluded.has(segment.toLowerCase())) || visited.has(directoryKey)) { return empty; }
             try { await this.safePath(directory); }
             catch (error) { if (error instanceof ProjectLibraryStoreError) { return empty; } throw error; }
-            visited.add(directory);
+            visited.add(directoryKey);
             const stat = await fs.lstat(directory).catch(error => {
                 if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return undefined; } throw error;
             });
@@ -340,7 +372,7 @@ export class ProjectLibraryStore {
             if (stat?.isSymbolicLink()) { throw new ProjectLibraryStoreError(current, 'Project metadata cannot follow symlinks'); }
         });
     }
-    private async load(discoverSources = true, cleanSources = discoverSources): Promise<LoadedLibrary> {
+    private async load(discoverSources = true, cleanSources = discoverSources, mode: ProjectLibraryReadMode = 'strict'): Promise<LoadedLibrary> {
         const format = projectFormat(this.rootPath);
         const unsafeLegacyGroups = path.join(this.rootPath, '.kot', 'groups.yaml');
         if (format.kind === 'v3' && await readOptional(unsafeLegacyGroups) !== undefined) {
@@ -353,7 +385,20 @@ export class ProjectLibraryStore {
         catch (error) { return this.invalid(this.groupsPath, error); }
         const loaded: LoadedLibrary = { organization, groups: organization.groups, legacyImports: organization.legacyImports,
             records: new Map(), recordPaths: new Map(), originals,
-            knownScenarioKeys: new Set(organization.knownKeys) };
+            knownScenarioKeys: new Set(organization.knownKeys), conflictingKeys: new Set() };
+        const duplicate = (key: string, filePath: string, message: string) => {
+            const error = new ProjectLibraryStoreError(filePath, message);
+            if (mode === 'strict') { throw error; }
+            loaded.conflictingKeys.add(key);
+            loaded.records.delete(key);
+            loaded.recordPaths.delete(key);
+            this.options.onWarning?.(error.message);
+        };
+        if (mode === 'display') {
+            for (const { key, paths: [left, right] } of duplicateProjectEntitySources(this.options.sourceIdentities ?? [])) {
+                duplicate(key, path.join(this.rootPath, right), `Duplicate scenario/process UID; also found at ${path.join(this.rootPath, left)}`);
+            }
+        }
         if (format.kind !== 'v3') { return loaded; }
         await this.safePath(this.metadataDirectory);
         const entries = await fs.readdir(this.metadataDirectory, { withFileTypes: true }).catch(error => {
@@ -381,15 +426,16 @@ export class ProjectLibraryStore {
             } catch (error) { this.invalid(filePath, error); }
         }
         const discovery = discoverSources ? await this.discover() : { sidecars: [], sources: [] };
-        const adjacentPaths = new Set(discovery.sidecars);
+        const adjacentPaths = uniqueLocalPaths(discovery.sidecars);
         for (const identity of [...(this.options.sourceIdentities ?? []), ...[...centralRecords.values()].map(value => value.document.identity)]) {
             const filePath = this.metadataFilePath(identity);
             if (this.excludedPath(filePath)) { continue; }
-            adjacentPaths.add(filePath);
+            const key = localPathKey(filePath);
+            if (!adjacentPaths.has(key)) { adjacentPaths.set(key, filePath); }
         }
-        await this.safePaths([...adjacentPaths]);
+        await this.safePaths([...adjacentPaths.values()]);
         const discoveredSidecars = new Set(discovery.sidecars);
-        const documents = await mapWithConcurrencyLimit([...adjacentPaths], 32, async filePath => {
+        const documents = await mapWithConcurrencyLimit([...adjacentPaths.values()], 32, async filePath => {
             const original = await readOptional(filePath);
             if (original === undefined) {
                 if (discoveredSidecars.has(filePath)) { throw new ProjectLibraryStoreError(filePath, 'Metadata changed while reading'); }
@@ -402,8 +448,10 @@ export class ProjectLibraryStore {
             const { filePath, original, document } = entry;
             loaded.originals.set(filePath, original);
             const key = projectEntityKey(document.identity);
+            if (loaded.conflictingKeys.has(key)) { continue; }
             if (loaded.records.has(key)) {
-                throw new ProjectLibraryStoreError(filePath, `Duplicate metadata UID or identity; also found at ${loaded.recordPaths.get(key)}`);
+                duplicate(key, filePath, `Duplicate metadata UID or identity; also found at ${loaded.recordPaths.get(key)}`);
+                continue;
             }
             loaded.records.set(key, { version: 2, ...document });
             loaded.recordPaths.set(key, filePath);
@@ -414,12 +462,14 @@ export class ProjectLibraryStore {
             for (const identity of this.options.sourceIdentities ?? []) { sourcePaths.add(path.join(this.rootPath, portableIdentity(identity).relativePath)); }
             for (const { document } of centralRecords.values()) { sourcePaths.add(path.join(this.rootPath, document.identity.relativePath)); }
             const sourceOriginals = new Map<string, string | undefined>();
-            const identities = (await mapWithConcurrencyLimit([...sourcePaths], 16, filePath => this.sourceIdentity(filePath, sourceOriginals)))
+            const identities = (await mapWithConcurrencyLimit([...uniqueLocalPaths([...sourcePaths]).values()], 16, filePath => this.sourceIdentity(filePath, sourceOriginals)))
                 .filter((identity): identity is ProjectEntityIdentity => !!identity);
             for (const [key, { document, filePath }] of centralRecords) {
+                if (loaded.conflictingKeys.has(key)) { continue; }
                 const matches = identities.filter(identity => projectEntityKey(identity) === key);
                 if (matches.length > 1) {
-                    throw new ProjectLibraryStoreError(filePath, `Ambiguous duplicate source UID: ${matches.map(identity => identity.relativePath).join('; ')}`);
+                    duplicate(key, filePath, `Ambiguous duplicate source UID: ${matches.map(identity => identity.relativePath).join('; ')}`);
+                    continue;
                 }
                 const identity = matches[0];
                 if (!identity) {
@@ -431,7 +481,7 @@ export class ProjectLibraryStore {
                 const sourcePath = path.join(this.rootPath, identity.relativePath);
                 loaded.originals.set(sourcePath, sourceOriginals.get(sourcePath));
                 const adjacent = loaded.records.get(key);
-                if (adjacent && (adjacent.identity.kind !== identity.kind || adjacent.identity.relativePath !== identity.relativePath)) {
+                if (adjacent && (adjacent.identity.kind !== identity.kind || localPathKey(adjacent.identity.relativePath) !== localPathKey(identity.relativePath))) {
                     throw new ProjectLibraryStoreError(loaded.recordPaths.get(key)!, 'Adjacent metadata identity does not match the active central source');
                 }
                 const destination = metadataFilePath(this.rootPath, identity);
@@ -461,7 +511,7 @@ export class ProjectLibraryStore {
                 }
             }
         }
-        if (!isProjectSetupPending(this.rootPath)) { await this.commit(loaded, migrations); }
+        if (!loaded.conflictingKeys.size && !isProjectSetupPending(this.rootPath)) { await this.commit(loaded, migrations); }
         return loaded;
     }
     private invalid(filePath: string, error: unknown): never {
@@ -474,10 +524,11 @@ export class ProjectLibraryStore {
             metadata: Object.fromEntries([...loaded.records].map(([key, value]) => [key, this.displayedMetadata(key, value)])),
             identities: Object.fromEntries([...loaded.records].map(([key, value]) => [key, value.identity])),
             legacyImports: loaded.legacyImports,
-            knownScenarioKeys: [...loaded.knownScenarioKeys].sort()
+            knownScenarioKeys: [...loaded.knownScenarioKeys].sort(),
+            ...(loaded.conflictingKeys.size ? { conflictingKeys: [...loaded.conflictingKeys] } : {})
         };
     }
-    read(): Promise<ProjectLibrarySnapshot> { return this.serial(async () => this.snapshot(await this.load())); }
+    read(mode?: ProjectLibraryReadMode): Promise<ProjectLibrarySnapshot> { return this.serial(async () => this.snapshot(await this.load(true, true, mode))); }
     /** Group choices do not require entity discovery, migration or the mutation queue. */
     async readGroups(): Promise<ProjectGroup[]> {
         try {
@@ -487,19 +538,20 @@ export class ProjectLibraryStore {
         } catch (error) { return this.invalid(this.groupsPath, error); }
     }
     /** Reload known adjacent objects without rediscovering or parsing the source corpus. */
-    readMetadata(): Promise<ProjectLibrarySnapshot> { return this.serial(async () => this.snapshot(await this.load(false))); }
+    readMetadata(mode?: ProjectLibraryReadMode): Promise<ProjectLibrarySnapshot> { return this.serial(async () => this.snapshot(await this.load(false, false, mode))); }
     /** The scanner has already supplied all source identities and legacy-block snapshots. */
-    readKnownSources(): Promise<ProjectLibrarySnapshot> { return this.serial(async () => this.snapshot(await this.load(false, true))); }
+    readKnownSources(mode?: ProjectLibraryReadMode): Promise<ProjectLibrarySnapshot> { return this.serial(async () => this.snapshot(await this.load(false, true, mode))); }
     private groupsWrites(loaded: LoadedLibrary): PendingWrite[] {
         const writes = planProjectOrganizationWrites(loaded.organization, loaded.groups, loaded.legacyImports);
         return writes;
     }
     private recordWrite(loaded: LoadedLibrary, key: string, document: MetadataDocument | undefined, preserveLocation = false): PendingWrite {
         const oldPath = loaded.recordPaths.get(key);
-        const filePath = document === undefined || preserveLocation ? oldPath ?? this.metadataPath(key) : this.metadataFilePath(document.identity);
+        const destination = document === undefined || preserveLocation ? oldPath ?? this.metadataPath(key) : this.metadataFilePath(document.identity);
+        const filePath = oldPath && localPathKey(oldPath) === localPathKey(destination) ? oldPath : destination;
         if (document === undefined) { return { filePath, text: undefined }; }
         for (const [existingKey, existingPath] of loaded.recordPaths) {
-            if (existingPath === filePath && existingKey !== key) { throw new ProjectLibraryStoreError(filePath, 'Metadata filename already belongs to a different entity identity'); }
+            if (localPathKey(existingPath) === localPathKey(filePath) && existingKey !== key) { throw new ProjectLibraryStoreError(filePath, 'Metadata filename already belongs to a different entity identity'); }
         }
         const central = filePath === this.metadataPath(key);
         return { filePath, text: stringify(central ? { ...document, version: 1 } : {
@@ -530,9 +582,10 @@ export class ProjectLibraryStore {
         });
         const uniqueWrites = new Map<string, PendingWrite>();
         for (const write of [...writes, ...cleanup.filter((write): write is NonNullable<typeof write> => !!write)]) {
-            const previous = uniqueWrites.get(write.filePath);
+            const key = localPathKey(write.filePath);
+            const previous = uniqueWrites.get(key);
             if (previous && previous.text !== write.text) { throw new ProjectLibraryStoreError(write.filePath, 'Conflicting writes for the same project metadata filename'); }
-            uniqueWrites.set(write.filePath, write);
+            if (!previous) { uniqueWrites.set(key, write); }
         }
         const changed = [...uniqueWrites.values()].filter(write => write.text !== loaded.originals.get(write.filePath));
         if (changed.length === 0) { return; }
@@ -686,6 +739,13 @@ export class ProjectLibraryStore {
                 throw new ProjectLibraryStoreError(this.metadataFilePath(normalizedIdentity), 'Metadata identity does not match its source UID or kind');
             }
             const existing = loaded.records.get(key);
+            if (existing && localPathKey(existing.identity.relativePath) !== localPathKey(normalizedIdentity.relativePath)) {
+                const oldSourcePath = path.join(this.rootPath, existing.identity.relativePath);
+                const oldSource = await this.sourceIdentity(oldSourcePath, loaded.originals);
+                if (oldSource && projectEntityKey(oldSource) === key) {
+                    throw new ProjectLibraryStoreError(this.metadataFilePath(normalizedIdentity), `Duplicate source UID; already used by ${oldSourcePath}`);
+                }
+            }
             checkCurrent?.(existing?.metadata); // Check the caller's baseline inside the shared write queue.
             const merged: Record<string, unknown> = { ...existing?.metadata };
             for (const [field, value] of Object.entries(supplied)) {
@@ -741,7 +801,7 @@ export class ProjectLibraryStore {
             const source = loaded.records.get(key);
             const actual = await this.sourceIdentity(path.join(this.rootPath, normalized.relativePath), loaded.originals);
             if (!source || !actual || projectEntityKey(actual) !== key || actual.kind !== normalized.kind
-                || source.identity.relativePath !== normalized.relativePath || (requiredKind !== 'feature' && !Object.hasOwn(source.metadata, 'groupId'))) {
+                || localPathKey(source.identity.relativePath) !== localPathKey(normalized.relativePath) || (requiredKind !== 'feature' && !Object.hasOwn(source.metadata, 'groupId'))) {
                 throw new Error('The source changed or no longer belongs to this project group.');
             }
             const sourceGroupId = source.metadata.groupId ?? '';
@@ -875,7 +935,7 @@ export class ProjectLibraryStore {
                 const identity = portableIdentity(entity.identity);
                 const key = projectEntityKey(identity);
                 const previous = importedKeys.get(key);
-                if (previous && (previous.relativePath !== identity.relativePath || previous.kind !== identity.kind)) {
+                if (previous && (localPathKey(previous.relativePath) !== localPathKey(identity.relativePath) || previous.kind !== identity.kind)) {
                     throw new Error(`Duplicate project entity UID: ${previous.relativePath}; ${identity.relativePath}`);
                 }
                 importedKeys.set(key, identity);

@@ -325,7 +325,7 @@ export async function scanWorkspaceForScenarioCatalog(
     const infos = parsedDefinitions.filter((item): item is TestInfo => item !== null).map(info => ({ ...info,
         hasTestSettings: !!(info.uid && referenced.has(settingsKey(info.yamlFileUri.fsPath, info.kind === 'process' ? 'process' : 'scenario', info.uid))) }));
     onProgress?.({ label: 'Migrating project metadata…' });
-    const definitions = await loadProjectScenarioMetadata(infos, workspaceRoots, scanRoots, true, assertProjectMetadataSaved, legacySourceTexts, onProgress);
+    const definitions = await loadProjectScenarioMetadata(infos, workspaceRoots, scanRoots, true, assertProjectMetadataSaved, legacySourceTexts, onProgress, 'display');
     const metadataMs = Date.now() - startedAt - enumerationMs - readAndParseMs;
     const catalog = buildScenarioCatalog(definitions);
     const duplicateNames = [...catalog.byName.values()].filter(items => items.length > 1).length;

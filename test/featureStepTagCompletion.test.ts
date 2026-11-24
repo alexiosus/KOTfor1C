@@ -272,6 +272,21 @@ test('IntelliSense at the end of a large feature edits only the chosen step and 
     assert.deepEqual(h.prompts, []);
 });
 
+test('run scenario buttons carry the document version and the real scenario heading line', async () => {
+    const h = harness('Feature: Order\nBackground:\n    Given ready\nScenario: First\n    Given payload\n    """\n' +
+        'Scenario: Payload\n    """\nScenario Outline: Second\n    Then value <id>\nExamples:\n    | id |\n    | 1 |\n');
+    const lenses = await new h.api.FeatureEditorCodeLensProvider(h.uri).provideCodeLenses(h.document, { isCancellationRequested: false });
+    const runs = Array.from(lenses as Array<{ range: Range; command: { command: string; arguments: [unknown, { line: number; version: number }] } }>)
+        .filter(lens => lens.command.command === 'kotTestToolkit.vanessaControl.runScenario');
+    assert.deepEqual(runs.map(lens => lens.range.start.line), [3, 8]);
+    for (const lens of runs) {
+        const [uri, target] = lens.command.arguments;
+        assert.equal(uri, h.uri);
+        assert.equal(target.line, lens.range.start.line);
+        assert.equal(target.version, h.document.version);
+    }
+});
+
 test('scenario creation asks for the type and title, inserts the native snippet and cancels safely', async () => {
     for (const mode of ['scenario', 'outline', 'cancel', 'cancelName', 'stale'] as const) {
         const text = mode === 'outline' ? 'Функционал: Заказы\nСценарий: Первый\n    Дано готово\n' : 'Feature: Orders\nScenario: First\n    Given ready\n';

@@ -9,6 +9,12 @@ test('completed runtime rows map to unique executable source lines, not a guesse
     assert.deepEqual(mapVanessaStepResults(reply('1. And literal → **Success**\n2. And Delay 99 → **Success**'), source, 5), []);
 });
 
+test('maps completed rows from .45 with the English interface', () => {
+    const source = '# language: en\nFeature: Probe\nScenario: First\n    And Delay 1\n';
+    const result = { content: [{ type: 'text', text: '# Результаты тестов\n\n- Статус: Success\n- Duration: 1296 мс\n\n## Steps (1)\n1. And Delay 1 → **Success** (1290 ms)' }] };
+    assert.deepEqual(mapVanessaStepResults(result, source), [{ lineNumber: 4, status: 'passed' }]);
+});
+
 test('skipped rows do not discard the successful and failed rows of the same run', () => {
     const source = '# language: en\nFeature: Own\nScenario: Own\n  And Delay 0\n  And own assertion\n  And later step\n';
     const result = { content: [{ type: 'text', text: '# Результаты тестов\n\n- Статус: Failed\n\n## Шаги (3)\n' +

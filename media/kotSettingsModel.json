@@ -607,6 +607,16 @@
       "labelEn": "Test execution mode"
     },
     {
+      "key": "kotTestToolkit.runVanessa.interfaceLanguage",
+      "label": "Язык интерфейса Vanessa Automation",
+      "section": "vanessa",
+      "advanced": false,
+      "preferredScope": "user",
+      "optionLabels": ["Из профиля служебного пользователя", "Русский", "Английский"],
+      "optionLabelsEn": ["From the service user profile", "Russian", "English"],
+      "labelEn": "Vanessa Automation interface language"
+    },
+    {
       "key": "kotTestToolkit.runVanessa.liveLogRefreshSeconds",
       "label": "Как часто обновлять журнал выполнения",
       "section": "vanessa",

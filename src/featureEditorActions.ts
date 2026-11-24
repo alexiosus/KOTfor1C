@@ -104,9 +104,10 @@ function tagsFor(source: FeatureEditorSource, section: Section): Set<string> {
         .filter(line => /^\s*@/u.test(line)).flatMap(line => line.match(/@[^\s@]+/gu) ?? []));
 }
 
-export function buildFeatureEditorActions(source: FeatureEditorSource, translate = (message: string) => message): FeatureEditorAction[] {
+export function buildFeatureEditorActions(source: FeatureEditorSource, translate = (message: string) => message,
+    structure?: ReturnType<typeof scanFeatureStructure>): FeatureEditorAction[] {
     if (!/\.feature(?:[?#].*)?$/iu.test(source.uri)) { return []; }
-    const { sections, lines } = scan(source);
+    const { sections, lines } = structure ?? scan(source);
     const feature = sections.find(section => section.kind === 'feature');
     if (!feature) { return []; }
     const actions: FeatureEditorAction[] = [];

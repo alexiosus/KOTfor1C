@@ -696,8 +696,8 @@ export class StandaloneFeatureService implements vscode.Disposable {
             catch (error) { this.log(error); continue; }
             existingRoots.push(root);
             const store = this.store(root);
-            let snapshot = await (metadataOnly ? store.readMetadata() : store.read());
-            if (!metadataOnly && !isProjectSetupPending(root) && !snapshot.legacyImports.includes('standalone')) {
+            let snapshot = await (metadataOnly ? store.readMetadata('display') : store.read('display'));
+            if (!metadataOnly && !snapshot.conflictingKeys?.length && !isProjectSetupPending(root) && !snapshot.legacyImports.includes('standalone')) {
                 const legacyIds = new Set(this.discovered.filter(feature => this.projectRoot(fileURLToPath(feature.id)) === root)
                     .map(feature => feature.id));
                 for (const id of Object.keys(this.legacyOrganization.placements)) {
@@ -714,7 +714,7 @@ export class StandaloneFeatureService implements vscode.Disposable {
                             ? { groupId: placement.groupId, order: placement.order } : {} };
                     })
                 }, 'standalone');
-                snapshot = await store.read();
+                snapshot = await store.read('display');
             }
             for (const group of new ProjectGroupDisplayOrder(this.dependencies.workspaceState).ordered(root, 'standalone', snapshot.groups)) {
                 const owners = groupRoots.get(group.id) ?? new Set<string>();

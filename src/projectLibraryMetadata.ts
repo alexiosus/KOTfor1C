@@ -2,7 +2,7 @@ import { projectFormat } from './projectFormat';
 import { legacyScenarioGroupId, readLegacyMetadata } from './projectLegacyMetadata';
 import { isProjectSetupPending, projectTransitionPreservesSource } from './projectSetupGate';
 import path from 'node:path';
-import { ProjectLibraryStore, projectEntityKey, type ProjectEntityIdentity, type ProjectEntityMetadata, type ProjectEntityMetadataPatch, type ProjectGroup, type ProjectLibrarySnapshot, type ProjectLibraryImport, type ProjectFileProgress } from './projectLibraryStore';
+import { ProjectLibraryStore, duplicateProjectEntitySources, projectEntityKey, type ProjectEntityIdentity, type ProjectEntityMetadata, type ProjectEntityMetadataPatch, type ProjectGroup, type ProjectLibrarySnapshot, type ProjectLibraryImport, type ProjectFileProgress, type ProjectLibraryReadMode } from './projectLibraryStore';
 import type { TestInfo } from './types';
 import { projectGroupDisplayKey, type ProjectDisplayGroup } from './projectGroupDisplayOrder';
 
@@ -13,7 +13,7 @@ const legacyPreviews = new Map<string, { input: ProjectLibraryImport; base?: Pro
 
 /** Display legacy organization while setup postpones writes; persisted records always win. */
 function snapshotForDisplay(root: string, snapshot: ProjectLibrarySnapshot): ProjectLibrarySnapshot {
-    if (!isProjectSetupPending(root) || snapshot.legacyImports.includes('scenario')) { legacyPreviews.delete(root); return snapshot; }
+    if (snapshot.conflictingKeys?.length || !isProjectSetupPending(root) || snapshot.legacyImports.includes('scenario')) { legacyPreviews.delete(root); return snapshot; }
     const preview = legacyPreviews.get(root);
     if (!preview) { return snapshot; }
     if (preview.base === snapshot && preview.value) { return preview.value; }
@@ -62,7 +62,7 @@ export async function reloadProjectScenarioMetadata(infos: readonly TestInfo[], 
         identities.push(identity); roots.set(root, identities);
     }
     for (const [root, identities] of roots) {
-        cacheProjectLibrarySnapshot(root, await createProjectLibraryStore(root, workspaceRoots, scanRoots, beforeWrite, identities).readMetadata());
+        cacheProjectLibrarySnapshot(root, await createProjectLibraryStore(root, workspaceRoots, scanRoots, beforeWrite, identities).readMetadata('display'));
     }
     return infos.map(info => applyCachedProjectScenarioMetadata(info, workspaceRoots, scanRoots));
 }
@@ -150,29 +150,30 @@ export function hasCachedProjectScenarioMetadata(info: TestInfo, workspaceRoots:
 }
 
 export async function loadProjectScenarioMetadata(infos: readonly TestInfo[], workspaceRoots: readonly string[], scanRoots: readonly string[], importLegacy = true,
-    beforeWrite?: (root: string) => void, sourceTexts?: ReadonlyMap<string, string>, onProgress?: (progress: ProjectFileProgress) => void): Promise<TestInfo[]> {
-    const byRoot = new Map<string, TestInfo[]>();
+    beforeWrite?: (root: string) => void, sourceTexts?: ReadonlyMap<string, string>, onProgress?: (progress: ProjectFileProgress) => void,
+    mode: ProjectLibraryReadMode = 'strict'): Promise<TestInfo[]> {
+    const byRoot = new Map<string, { items: TestInfo[]; identities: ProjectEntityIdentity[] }>();
     for (const info of infos) {
-        const { root } = location(info, workspaceRoots, scanRoots);
-        const items = byRoot.get(root) ?? [];
-        items.push(info); byRoot.set(root, items);
+        const { root, identity } = location(info, workspaceRoots, scanRoots);
+        const batch = byRoot.get(root) ?? { items: [], identities: [] };
+        batch.items.push(info); batch.identities.push(identity); byRoot.set(root, batch);
     }
-    for (const [root, items] of byRoot) {
-        const sources = new Map<string, string>();
-        for (const info of items) {
-            const identity = resolveProjectEntityIdentity(info.yamlFileUri.fsPath, root, info.kind === 'process' ? 'process' : 'scenario', info.uid);
-            const key = projectEntityKey(identity);
-            const previous = sources.get(key);
-            if (previous && previous !== info.yamlFileUri.fsPath) {
-                throw new Error(`Duplicate scenario/process UID: ${previous}; ${info.yamlFileUri.fsPath}. Assign unique UIDs before importing project metadata.`);
+    if (mode === 'strict') {
+        for (const [root, { identities }] of byRoot) {
+            const [duplicate] = duplicateProjectEntitySources(identities);
+            if (duplicate) {
+                const [left, right] = duplicate.paths.map(file => path.join(root, file));
+                throw new Error(`Duplicate scenario/process UID: ${left}; ${right}. Assign unique UIDs before importing project metadata.`);
             }
-            sources.set(key, info.yamlFileUri.fsPath);
         }
     }
-    for (const [root, items] of byRoot) {
-        const store = createProjectLibraryStore(root, workspaceRoots, scanRoots, beforeWrite,
-            items.map(info => resolveProjectEntityIdentity(info.yamlFileUri.fsPath, root, info.kind === 'process' ? 'process' : 'scenario', info.uid)), sourceTexts, onProgress);
-        let snapshot = !importLegacy ? await store.readMetadata() : sourceTexts ? await store.readKnownSources() : await store.read();
+    for (const [root, { items, identities }] of byRoot) {
+        const store = createProjectLibraryStore(root, workspaceRoots, scanRoots, beforeWrite, identities, sourceTexts, onProgress);
+        let snapshot = !importLegacy ? await store.readMetadata(mode) : sourceTexts ? await store.readKnownSources(mode) : await store.read(mode);
+        if (snapshot.conflictingKeys?.length) {
+            cacheProjectLibrarySnapshot(root, snapshot);
+            continue;
+        }
         if (importLegacy && !snapshot.legacyImports.includes('scenario')) {
             const groups = new Map<string, ProjectGroup>();
             const entities: Array<{ identity: ProjectEntityIdentity; metadata: ProjectEntityMetadata }> = [];

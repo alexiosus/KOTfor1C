@@ -7,7 +7,7 @@ type Phase = 'preview' | 'applying' | 'result' | 'details' | 'cancelled' | 'stal
 const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/gu, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
 
 /** Render server values as text only; the page never receives executable markup or arbitrary commands. */
-export function settingsReportHtml(report: VanessaSettingsReply, items: readonly VanessaSetting[], phase: Phase, assets: { style: string; csp: string; nonce: string }): string {
+export function settingsReportHtml(report: VanessaSettingsReply, items: readonly VanessaSetting[], phase: Phase, assets: { style: string; csp: string; nonce: string }, applyLabel = vscode.l10n.t('Apply settings')): string {
     const t = vscode.l10n.t;
     const names = new Map(items.flatMap(item => [[item.key, item.synonym || item.key], [item.path, item.synonym || item.path]] as const));
     const name = (key: unknown) => names.get(String(key)) ?? (key === 'GlobalVars' ? t('Global variables') : String(key ?? ''));
@@ -43,7 +43,7 @@ export function settingsReportHtml(report: VanessaSettingsReply, items: readonly
         ${section(t('Already match the requested values'), equal)}${section(t('Skipped settings'), report.ignored)}
         ${report.out_of_scope.length ? `<section><h2>${escape(t('Managed separately'))}</h2><p>${escape(t('Test client profiles and global variables are managed separately from Vanessa settings.'))}</p><ul>${report.out_of_scope.map(entry).join('')}</ul></section>` : ''}
         ${!details && !report.changed.length && !equal.length && !report.ignored.length && !report.out_of_scope.length && !failed ? `<p>${escape(t('No settings need to be changed.'))}</p>` : ''}
-        </main>${preview && !failed ? `<footer><button id="apply" class="primary">${escape(t('Apply settings'))}</button><button id="cancel">${escape(t('Cancel'))}</button></footer>` : ''}
+        </main>${preview && !failed ? `<footer><button id="apply" class="primary">${escape(applyLabel)}</button><button id="cancel">${escape(t('Cancel'))}</button></footer>` : ''}
         <script nonce="${assets.nonce}">const api=acquireVsCodeApi();for(const action of ['apply','cancel'])document.getElementById(action)?.addEventListener('click',()=>{for(const button of document.querySelectorAll('button'))button.disabled=true;api.postMessage({action,pageId:'${assets.nonce}'});});</script></body></html>`;
 }
 
@@ -53,6 +53,7 @@ export class VanessaSettingsReport implements vscode.Disposable {
     private report?: VanessaSettingsReply;
     private items: readonly VanessaSetting[] = [];
     private confirmation?: { current(): boolean; resolve(value: boolean): void };
+    private applyLabel?: string;
     private pageId = '';
     private readonly connection: vscode.Disposable;
     constructor(private readonly context: vscode.ExtensionContext, session: VanessaControlSession) {
@@ -60,9 +61,10 @@ export class VanessaSettingsReport implements vscode.Disposable {
             if (this.confirmation && !this.confirmation.current()) { this.finish(false, 'stale'); }
         });
     }
-    show(report: VanessaSettingsReply, items: readonly VanessaSetting[] = [], phase: Phase = 'details'): void {
+    show(report: VanessaSettingsReply, items: readonly VanessaSetting[] = [], phase: Phase = 'details', applyLabel?: string): void {
         this.finish(false);
         this.report = report; this.items = items;
+        this.applyLabel = applyLabel;
         if (!this.panel) {
             const panel = vscode.window.createWebviewPanel('kotTestToolkit.vanessaSettingsReport', vscode.l10n.t('Vanessa settings report'), vscode.ViewColumn.One,
                 { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'media')] });
@@ -79,8 +81,8 @@ export class VanessaSettingsReport implements vscode.Disposable {
         }
         this.render(phase); this.panel.reveal();
     }
-    async confirm(report: VanessaSettingsReply, items: readonly VanessaSetting[], current: () => boolean): Promise<boolean> {
-        this.show(report, items, current() ? 'preview' : 'stale');
+    async confirm(report: VanessaSettingsReply, items: readonly VanessaSetting[], current: () => boolean, applyLabel?: string): Promise<boolean> {
+        this.show(report, items, current() ? 'preview' : 'stale', applyLabel);
         if (!current() || !report.ok || report.errors.length) { return false; }
         return new Promise(resolve => { this.confirmation = { current, resolve }; });
     }
@@ -96,7 +98,7 @@ export class VanessaSettingsReport implements vscode.Disposable {
         this.panel.webview.html = settingsReportHtml(this.report, this.items, phase, {
             style: this.panel.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'vanessaSettingsReport.css')).toString(),
             csp: this.panel.webview.cspSource, nonce: this.pageId
-        });
+        }, this.applyLabel);
     }
     dispose(): void { this.connection.dispose(); this.finish(false); this.panel?.dispose(); }
 }

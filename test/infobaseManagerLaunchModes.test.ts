@@ -51,9 +51,11 @@ test('manager launches of the shared service IB use the shared policy even with 
     const ts = require('typescript') as typeof import('typescript'); const module = { exports: {} as any };
     const service = path.resolve('artifacts/service-test-ib'); const active = { name: 'running', clientExePath: '/platform/active/1cv8c.exe' };
     let resolutions = 0; let catalogs = 0;
+    const prepared: string[] = [];
     const dependencies: Record<string, unknown> = {
         './oneCInfobaseConnection': connections,
-        './startupInfobase': { getSharedStartupInfobasePaths: () => ({ infobaseDirectory: service }) },
+        './startupInfobase': { getSharedStartupInfobasePaths: () => ({ infobaseDirectory: service }),
+            ensureSharedStartupInfobaseReady: async (_context: unknown, exe: string) => prepared.push(exe) },
         './sharedStartupPlatform': { resolveSharedStartupPlatform: async () => { resolutions++; return active; } },
         './oneCPlatform': { normalizeOneCClientExePath: (exe: string) => exe, ensureOneCPlatformsCatalogInitialized: async () => { catalogs++; return []; } }
     };
@@ -72,4 +74,5 @@ test('manager launches of the shared service IB use the shared policy even with 
     assert.equal(resolutions, 1); assert.equal(catalogs, 1);
     const maintenance = await module.exports.maintenancePlatform({}, service, (text: string) => text);
     assert.equal(maintenance, active.clientExePath); assert.equal(resolutions, 2); assert.equal(catalogs, 1);
+    assert.deepEqual(prepared, [active.clientExePath]);
 });

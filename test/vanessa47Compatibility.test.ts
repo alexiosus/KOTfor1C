@@ -20,7 +20,7 @@ const status = (recording: boolean, id?: number) => '# Результат зап
 
 test('VA .47 capabilities are negotiated individually while .45 keeps its existing operations', () => {
     const modern = assessVanessaControlCapabilities(tools47); const legacy = assessVanessaControlCapabilities(tools45);
-    for (const key of ['stateJson', 'resultsJson', 'elementSteps', 'activeFormElement', 'recordingResult', 'settingsRead', 'settingsWrite', 'clientProfilePort'] as const) {
+    for (const key of ['stateJson', 'resultsJson', 'elementSteps', 'activeFormElement', 'recordingResult', 'settingsRead', 'settingsWrite', 'settingsPreserveCi', 'clientProfilePort'] as const) {
         assert.equal(modern[key].supported, true, key); assert.equal(legacy[key].supported, false, key);
     }
     for (const key of ['state', 'editor', 'oneStep', 'recording', 'clientProfilesRead'] as const) { assert.equal(legacy[key].supported, true, key); }
@@ -28,6 +28,10 @@ test('VA .47 capabilities are negotiated individually while .45 keeps its existi
     changed.find((row: any) => row.name === 'get_form_element_steps').inputSchema.required.push('future_context');
     assert.equal(assessVanessaControlCapabilities(changed).elementSteps.supported, false);
     assert.equal(assessVanessaControlCapabilities(changed).stateJson.supported, true);
+    assert.equal(assessVanessaControlCapabilities(liveTools47).settingsPreserveCi.supported, true);
+    delete changed.find((row: any) => row.name === 'manage_va_settings').inputSchema.properties.preserve_ci_flags;
+    assert.equal(assessVanessaControlCapabilities(changed).settingsPreserveCi.supported, false);
+    assert.equal(assessVanessaControlCapabilities(changed).settingsWrite.supported, true);
 });
 
 test('compatible optional API additions preserve capabilities and structured state', () => {

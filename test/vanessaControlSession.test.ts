@@ -231,7 +231,11 @@ test(`${mode} rejects feature bytes replaced during preparation and executes onl
         });
         await session.attach(wire, 'http://localhost:9876');
         if (changed) { await assert.rejects(session.run(mode, 'C:\\own.feature', 4, expected)); assert.equal(invoked, undefined); }
-        else { await session.run(mode, 'C:\\own.feature', 4, expected); assert.equal(invoked?.mode, mode === 'runFeature' ? 'reloadAndRun' : 'reloadAndRunFromLine'); assert.equal(invoked?.filePath, 'C:\\own.feature'); }
+        else {
+            await session.run(mode, 'C:\\own.feature', 4, expected);
+            assert.deepEqual(invoked, mode === 'runFeature' ? { mode: 'all' }
+                : { filePath: 'C:\\own.feature', lineNumber: 4, mode: 'reloadAndRunFromLine' });
+        }
         await session.detach();
     }
 });
@@ -257,6 +261,34 @@ test('runFromLine refuses a different or dirty Vanessa tab selected during prepa
         await session.detach();
     }
 });
+test('run scenario selects an accepted step in the same saved scenario and uses the selected MCP mode', async () => {
+    const file = 'C:\\own.feature';
+    const source = '# language: en\nFeature: Own\nScenario: Own\n    And Call an export\n    And Delay 0\n';
+    let cursor = 1;
+    const calls: unknown[] = [];
+    const session = new VanessaControlSession();
+    const wire = fake(async (name, args) => {
+        if (['load_features', 'open_feature_file', 'select_step', 'run_scenario'].includes(name)) { calls.push([name, args]); }
+        if (name === 'get_editor_state') {
+            return { content: [{ type: 'text', text: `# Состояние редактора\n\n## Открытые вкладки\nКоличество: 1\n\n- **→** ${file}\n\n## Активный документ\n- Строка: ${cursor}\n\n### Содержимое\n\`\`\`gherkin\n${source}\n\`\`\`` }] };
+        }
+        if (name === 'select_step') {
+            if (args.lineNumber === 4) { return { isError: true, content: [{ type: 'text', text: 'ACTION_FAILED: В строке №4 нет шага, который можно выполнить. В этой строке обнаружен тип строки: ШагСценарий' }] }; }
+            cursor = Number(args.lineNumber);
+        }
+        if (name === 'run_scenario') { return capturedReply('run-passed.live.ru.md'); }
+        return state();
+    });
+    await session.attach(wire, 'http://localhost:9876');
+    await session.run('runScenario', file, 4, source, undefined, [4, 5]);
+    assert.equal(session.snapshot.execution?.status, 'passed');
+    assert.deepEqual(calls, [
+        ['load_features', { path: file }], ['open_feature_file', { filePath: file }],
+        ['select_step', { lineNumber: 4 }], ['select_step', { lineNumber: 5 }], ['run_scenario', { mode: 'selected' }]
+    ]);
+    await session.detach();
+});
+
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
 function fake(call?: VanessaControlTransport['callTool']): VanessaControlTransport & { calls: string[]; closes: number } {
     const instance = { calls: [] as string[], closes: 0, initialize: async () => ({ name: 'Vanessa', version: 'test' }),
@@ -473,19 +505,80 @@ test('F11 keeps the exact active Vanessa path so drive-letter casing cannot crea
     await session.detach();
 });
 
-test('a full feature run reloads the whole file instead of skipping its preparation from a step', async () => {
+for (const version of ['1.2.043.45', '1.2.043.47']) {
+test(`${version} runs the entire verified feature from its beginning`, async () => {
+    const file = 'C:\\own.feature';
+    const source = 'Feature: Own\nScenario: Safe\n    And Delay 1\n';
+    const launches: unknown[] = [];
     const session = new VanessaControlSession();
     const wire = fake(async (name, args) => {
+        if (name === 'load_features' || name === 'open_feature_file') { launches.push([name, args]); }
+        if (name === 'get_editor_state') {
+            return { content: [{ type: 'text', text: `# Состояние редактора\n\n## Открытые вкладки\nКоличество: 1\n\n- **→** ${file}\n\n## Активный документ\n- Строка: 3\n\n### Содержимое\n\`\`\`gherkin\n${source}\n\`\`\`` }] };
+        }
         if (name === 'run_scenario') {
-            assert.deepEqual(args, { filePath: 'C:\\own.feature', mode: 'reloadAndRun' });
+            launches.push([name, args]);
             return { content: [{ type: 'text', text: '## Результат выполнения сценариев: все сценарии выполнены успешно\n\nИмя сценария: Safe\nРезультат прохождения сценария: Success\n' }] };
         }
-        return state();
+        return version.endsWith('.47') && name === 'get_vanessa_automation_state'
+            ? { content: [{ type: 'text', text: '{"schemaVersion":"1.1","ok":true,"isRunning":false}' }] } : state();
     });
+    if (version.endsWith('.47')) { wire.listTools = async () => JSON.parse(fs.readFileSync(`test/fixtures/vanessa-control/${version}/tools.json`, 'utf8')).tools; }
     await session.attach(wire, 'http://localhost:9876');
-    await session.run('runFeature', 'C:\\own.feature', 1);
+    await session.run('runFeature', file, 1, source);
+    assert.deepEqual(launches, version.endsWith('.45') ? [
+        ['load_features', { path: file }], ['open_feature_file', { filePath: file }], ['run_scenario', { mode: 'all' }]
+    ] : [['open_feature_file', { filePath: file }], ['run_scenario', { filePath: file, mode: 'reloadAndRun' }]]);
     assert.equal(session.snapshot.execution?.status, 'passed');
 });
+}
+
+for (const variant of ['legacy', 'legacy transition', 'fast', 'stale result', 'dirty editor'] as const) {
+test(`external VA progress only highlights confirmed steps in the matching saved feature: ${variant}`, async () => {
+    const file = 'C:\\Tests\\sales.feature';
+    const source = 'Feature: Sales\nScenario: Test\n    And Delay 1\n    And Delay 2\n';
+    const modern = !variant.startsWith('legacy');
+    const json = (data: Record<string, unknown>) => ({ content: [{ type: 'text' as const, text: JSON.stringify({ schemaVersion: '1.1', ok: true, ...data }) }] });
+    let phase: 'before' | 'running' | 'finished' = 'before';
+    let resultReads = 0;
+    const wire = fake(async name => {
+        if (name === 'get_vanessa_automation_state') {
+            if (!modern) { return phase === 'finished' ? capturedReply('state-idle.live.ru.md') :
+                { content: [{ type: 'text', text: state(phase === 'running').content[0].text.replace('lineNumber: 12', 'lineNumber: 3') }] }; }
+            return json({ runId: phase === 'before' ? '' : 'external', isRunning: phase === 'running', currentFeature: { fullPath: file },
+                currentStep: phase === 'finished' ? { lineNumber: 4, status: 'success', stepFile: 'C:\\other.feature' } : { lineNumber: 3, status: 'running' } });
+        }
+        if (name === 'get_editor_state') {
+            return { content: [{ type: 'text', text: `# Состояние редактора\n\n## Открытые вкладки\nКоличество: 1\n\n- **→** ${file}${variant === 'dirty editor' ? ' *(изменена)*' : ''}\n\n## Активный документ\n- Строка: 4\n\n### Содержимое\n\`\`\`gherkin\n${source}\n\`\`\`` }] };
+        }
+        assert.equal(name, 'get_test_results');
+        assert.equal(phase, 'finished');
+        if (++resultReads === 1 && variant === 'legacy transition') {
+            return { isError: true, content: [{ type: 'text', text: 'Выполнение сценариев ещё не закончено.' }] };
+        }
+        return modern ? json({ runId: variant === 'stale result' ? 'previous' : 'external', isRunning: false, isComplete: true, featurePath: file, status: 'success',
+            steps: [{ lineNumber: 3, name: 'And Delay 1', status: 'success', stepFile: file },
+                { lineNumber: 4, name: 'And Delay 2', status: 'success', stepFile: 'C:\\other.feature' }] })
+            : { content: [{ type: 'text', text: '# Результаты тестов\n\n- Статус: Success\n\n## Шаги (2)\n1. And Delay 1 → **Success**\n2. And Delay 2 → **Success**' }] };
+    });
+    if (modern) { wire.listTools = async () => JSON.parse(fs.readFileSync('test/fixtures/vanessa-control/1.2.043.47/tools.json', 'utf8')).tools; }
+    const session = new VanessaControlSession();
+    await session.attach(wire, 'http://localhost:9876');
+    assert.equal(session.snapshot.execution, undefined);
+    if (!modern) {
+        phase = 'running'; await session.refreshState();
+        assert.equal(session.snapshot.execution?.currentLineNumber, 3);
+        assert.equal(session.snapshot.runActive, false);
+    }
+    phase = 'finished'; await session.refreshState(); await session.refreshState();
+    const expected = !modern ? [3, 4] : variant === 'fast' ? [3] : [];
+    assert.deepEqual(session.snapshot.execution?.steps ?? [], expected.map(lineNumber => ({ lineNumber, status: 'passed' })));
+    assert.equal(session.executionMatchesSource(file, source), variant !== 'dirty editor');
+    assert.equal(session.executionMatchesSource(file, source + '# changed locally'), false);
+    assert.equal(resultReads, variant === 'dirty editor' ? 0 : variant === 'legacy transition' ? 2 : 1);
+    await session.detach();
+});
+}
 
 test('continue requires a freshly confirmed breakpoint stop, never a detached, failed or idle session', async () => {
     const session = new VanessaControlSession();
@@ -682,9 +775,10 @@ test('unknown state and remote tool failures never become a successful run; raw 
 test('external running state blocks local execution and all lines must be positive integers', async () => {
     const session = new VanessaControlSession(); const wire = fake(async () => state(true));
     await session.attach(wire, 'http://localhost:9876');
+    const before = wire.calls.length;
     await assert.rejects(session.run('oneStep', 'C:\\test.feature', 4), /busy/i);
     for (const line of [0, -1, 1.5, NaN]) { await assert.rejects(session.select('C:\\test.feature', line)); }
-    assert.equal(wire.calls.length, 1);
+    assert.equal(wire.calls.length, before);
 });
 
 test('a failed initial state request clears capabilities and observations after disposing the connection', async () => {
@@ -766,18 +860,18 @@ for (const mode of ['runFeature', 'runFromLine'] as const) {
 for (const rejection of ['modal dialog', 'syntax preflight']) {
 test(`a rejected .47 ${mode} cannot adopt a previous failure with the same runId: ${rejection}`, async () => {
     const file = 'C:\\Tests\\own.feature';
+    const message = rejection === 'modal dialog' ? 'ACTION_FAILED: Cannot start while a modal dialog is open.'
+        : 'ACTION_FAILED: Обнаружены ошибки проверки синтаксиса файла.\nAnd I wait "Bank receipt * dated *" window closing in 20 seconds\nПеред последним символом * не должно быть пробела.';
     const json = (data: Record<string, unknown>) => ({ content:[{type:'text' as const,text:JSON.stringify({schemaVersion:'1.1',...data})}] });
     const wire = fake(async name => {
-        if (name === 'run_scenario') { return {isError:true,content:[{type:'text',text: rejection === 'modal dialog'
-            ? 'ACTION_FAILED: Cannot start while a modal dialog is open.'
-            : 'ACTION_FAILED: Обнаружены ошибки проверки синтаксиса файла: known edited step.'}]}; }
+        if (name === 'run_scenario') { return { isError: true, content: [{ type: 'text', text: message }] }; }
         if (name === 'get_test_results') { return json({ok:true,isRunning:false,isComplete:true,runId:'previous',status:'failed',featurePath:file,failedStep:{lineNumber:8},steps:[{lineNumber:8,status:'failed'}],error:{message:'Previous failure'}}); }
         if (name === 'get_vanessa_automation_state') { return json({ok:true,isRunning:false,runId:'previous',currentFeature:{fullPath:file},currentStep:{lineNumber:8,status:'failed'}}); }
         return {content:[]};
     });
     wire.listTools = async () => JSON.parse(fs.readFileSync('test/fixtures/vanessa-control/1.2.043.47/tools.live.json','utf8')).tools;
     const session = new VanessaControlSession();await session.attach(wire,'http://localhost:9876');
-    await assert.rejects(session.run(mode,file,8), rejection === 'modal dialog' ? /modal dialog/ : /синтаксиса/);
+    await assert.rejects(session.run(mode, file, 8), { message });
     assert.equal(wire.calls.filter(name => name === 'run_scenario').length, 1, 'a rejected launch is never automatically replayed');
     assert.equal(session.snapshot.execution?.status,'unknown');assert.equal(session.failure,undefined);
     assert.equal(session.snapshot.runActive,false);assert.equal(wire.closes,0);

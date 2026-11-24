@@ -19,6 +19,34 @@ test('a plain YAML step becomes one exact runtime step without copying surroundi
     assert.deepEqual(trial.sourceLines, [3]);
 });
 
+test('a native SPPR fragment executes just the selected step and keeps its original payload line numbers', async () => {
+    for (const payload of ['', '    | A | B |\n    | 1 | 2 |\n', '    """\n    literal text\n    """\n']) {
+        const current = { ...source(''), uri: 'file:///KOT/scen.feature', filePath: '/KOT/scen.feature', line: 2,
+            text: `#language: en\nAnd Delay 0\nAnd a payload\n${payload}And Delay 2\n`.replace(/\n/gu, '\r\n') };
+        let executed = false;
+        const control = new VanessaYamlTrialControl({ current: () => current, save: async () => true,
+            readText: async () => current.text, getDefinitions: async () => definitions('builtInStep', 'And a payload'),
+            materialize: async trial => {
+                assert.equal(trial.source, current);
+                assert.equal(trial.featureText, `# language: en\nFeature: KOT step trial\nScenario: KOT step trial\n    And a payload\n${payload.split('\n').filter(Boolean).map(line => '    ' + line + '\n').join('')}`);
+                assert.deepEqual(trial.sourceLines, payload ? payload.startsWith('    |') ? [2, 3, 4] : [2, 3, 4, 5] : [2]);
+                return '/runtime/trial.feature';
+            }, execute: async (_file, trial, guard) => { assert.equal(trial.lineNumber, 4); assert.equal(guard(), true); executed = true; } });
+        await control.run(); assert.equal(executed, true);
+    }
+});
+
+test('native SPPR trials keep language and compiler restrictions', () => {
+    const native = (text: string, line = 1) => ({ ...source(''), uri: 'file:///KOT/scen.feature', filePath: '/KOT/scen.feature', text, line });
+    assert.match(prepareVanessaYamlTrial(native('#language: ru\nИ Пауза 1'), definitions('builtInStep', 'И Пауза "%1 seconds"')).featureText, /^# language: ru\nФункционал:/u);
+    for (const value of [native('#language: en\nAnd Delay [Wait]'), native('#language: en\nAnd Delay <Wait>'),
+        native('#language: en\nIf "x" = "y" Then\n    And Delay 1\nEndIf', 2),
+        native('#language: en\nAnd Delay "sub/file"'), native('#language: en\nAnd Delay 1', 0),
+        native('#language: en\nAnd a payload\n    | A |', 2)]) {
+        assert.throws(() => prepareVanessaYamlTrial(value, definitions()));
+    }
+});
+
 test('decimal numeric arguments remain literal numbers rather than being mistaken for attachments', () => {
     assert.match(prepareVanessaYamlTrial(source('    And Delay 1.5'), definitions()).featureText, /And Delay 1\.5\n$/u);
 });
